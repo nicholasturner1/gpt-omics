@@ -8,6 +8,7 @@ import numpy as np
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoForCausalLM
 
 
+
 def QK(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     """Extracts the QK matrix from a given head & layer from the model."""
     config = model.config
@@ -26,11 +27,8 @@ def QK(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     return Qh.T @ Kh
 
 
-def OV_simple(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
-    """Extracts the (simplified) OV matrix from a given head & layer from the model.
-
-    The simplified version ignores biases.
-    """
+def OV(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
+    """Extracts the OV matrix from a given head & layer from the model."""
     config = model.config
     head_dim = config.hidden_size // config.num_heads
 
@@ -45,6 +43,69 @@ def OV_simple(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     Vh = V[head * head_dim : (head + 1) * head_dim, :]
 
     return Oh @ Vh
+
+
+# I used to call this function "OVsimple" to signal that we would later account
+# for the biases within the same matrix, but we later decided against this since
+# the bias can't be attributed to particular heads.
+OVsimple = OV
+
+
+def Obias(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+    """Extracts the output bias from a given layer of the model."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    return model.transformer.h[layer].attn.attention.out_proj.bias.data.numpy()
+
+
+def MLPin(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+    """Extracts the input weights for an MLP layer."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    return model.transformer.h[layer].mlp.c_fc.weight.data.numpy()
+
+
+def MLPout(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+    """Extracts the output weights for an MLP layer."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    return model.transformer.h[layer].mlp.c_proj.weight.data.numpy()
+
+
+def MLPbias_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+    """Extracts the bias for the input weights of an MLP layer."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    return model.transformer.h[layer].mlp.c_fc.bias.data.numpy()
+
+
+def MLPbias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+    """Extracts the bias for the output weights of an MLP layer."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    return model.transformer.h[layer].mlp.c_proj.bias.data.numpy()
+
+
+def layernorm_biases(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
+    """Extracts the layer norm biases from a given layer of the model."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    bias_1 = model.transformer.h[layer].ln_1.bias.data.numpy()
+    bias_2 = model.transformer.h[layer].ln_2.bias.data.numpy()
+
+    return bias_1, bias_2
 
 
 def attentionweights(
