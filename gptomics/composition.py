@@ -12,12 +12,14 @@ def removemean(M: np.ndarray, method="direct") -> np.ndarray:
     if method == "direct":
         return M - M.mean(0)
 
-    # less direct, more fun
+    # less direct, more fun, works with svd.SVD objects
     elif method == "matrix multiply":
         n = M.shape[0]
         E = np.eye(n, dtype=M.dtype) - 1 / n
 
-        return E @ M
+        # transposes ensure that M's __matmul__ method is called
+        # this helps to support svd.SVD objects
+        return (M.T @ E).T
 
     else:
         raise ValueError(f"unrecognized method: {method}")

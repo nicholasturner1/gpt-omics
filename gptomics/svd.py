@@ -12,7 +12,7 @@ class SVD:
 
     def __matmul__(self: SVD, other: Union[SVD, np.ndarray]) -> SVD:
         if isinstance(other, np.ndarray):
-            other = SVD(other)
+            other = SVD.frommatrix(other)
 
         # "inner core" of the product, p -> prime
         Sp = (self.S[:, np.newaxis] * self.Vt) @ (other.U * other.S)
@@ -49,3 +49,11 @@ class SVD:
     
     def __repr__(self: SVD) -> str:
         return f"SVD <U: {self.U.shape}, S: {self.S.shape}, Vt: {self.Vt.shape}>"
+
+    @property
+    def shape(self: SVD) -> tuple[int]:
+        return (self.U.shape[0], self.Vt.shape[1])
+
+    @property
+    def dtype(self: SVD) -> type:
+        return self.U.dtype
