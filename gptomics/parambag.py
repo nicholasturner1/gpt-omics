@@ -25,39 +25,39 @@ class ParamBag:
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
         """Extracts the QK matrix from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def OV(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
         """Extracts the OV matrix from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the output bias vector from a model (if it exists)."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def MLPin(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP input matrix from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def MLPout(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP output matrix from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def MLPbias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP input bias from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def MLPbias_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP output bias from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def layernorm_biases(
         self, layer: int, factored: bool = False
     ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
         """Extracts the Layer norm biases from a model."""
-        raise NotImplemented()
+        raise NotImplementedError
 
     def maybe_factor(
         self, factor: bool = True, *Ms: np.ndarray
