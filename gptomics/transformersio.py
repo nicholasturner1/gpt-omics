@@ -1,4 +1,6 @@
 """Some utility functions for working with HuggingFace transformers models."""
+from __future__ import annotations
+
 import torch
 from transformers import AutoModelForCausalLM
 

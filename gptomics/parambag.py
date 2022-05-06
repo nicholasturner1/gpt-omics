@@ -1,4 +1,6 @@
 """ParameterBag - an abstraction for fetching parameters from multiple model types."""
+from __future__ import annotations
+
 import time
 import json
 from functools import lru_cache
@@ -12,6 +14,7 @@ from .svd import SVD
 
 class ParamBag:
     """ParameterBag virtual class."""
+
     def __init__(self):
         pass
 
@@ -49,7 +52,6 @@ class ParamBag:
 
 
 class HuggingFaceBag(ParamBag):
-
     def __init__(self, modelname: str):
         self.model = transformersio.load_model(modelname)
 
@@ -84,6 +86,7 @@ class CachedFileBag(ParamBag):
     See torchio. Tensors are cached when reading from disk to minimize
     the number of disk accesses.
     """
+
     def __init__(self, config_filename: str, param_filename: str):
         self.config = self.read_config(config_filename)
         self.param_filename = param_filename
@@ -172,7 +175,7 @@ class GPTJBag(CachedFileBag):
 
     def MLPbias_in(self, layer: int, factored: bool = True) -> np.ndarray:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
-        
+
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.bias")
 
         if factored:
@@ -190,7 +193,9 @@ class GPTJBag(CachedFileBag):
         else:
             return M
 
-    def layernorm_biases(self, layer: int, factored: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    def layernorm_biases(
+        self, layer: int, factored: bool = True
+    ) -> tuple[np.ndarray, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         bias = self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias")

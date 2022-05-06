@@ -4,6 +4,8 @@ This mostly copies code from torch.serialiation, but cuts and pastes things
 together to give flexibility in which tensors we actually read. It also uses
 some monkey patch shenanigans at the bottom.
 """
+from __future__ import annotations
+
 import io
 import pickle
 

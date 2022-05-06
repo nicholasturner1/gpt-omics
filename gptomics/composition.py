@@ -1,4 +1,6 @@
 """Computing [QKV] contribution/composition terms."""
+from __future__ import annotations
+
 import numpy as np
 
 
@@ -25,7 +27,9 @@ def removemean(M: np.ndarray, method="direct") -> np.ndarray:
         raise ValueError(f"unrecognized method: {method}")
 
 
-def basecomposition(dst_M: np.ndarray, src_M: np.ndarray, center: bool = True) -> np.float32:
+def basecomposition(
+    dst_M: np.ndarray, src_M: np.ndarray, center: bool = True
+) -> np.float32:
     """Computes composition assuming that the matrices are properly transposed."""
     if center:
         src_M = removemean(src_M)

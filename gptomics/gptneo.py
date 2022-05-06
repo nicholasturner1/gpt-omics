@@ -3,10 +3,11 @@
 These functions are slower than running the actual model, but offer flexibility
 for analysis.
 """
+from __future__ import annotations
+
 import torch
 import numpy as np
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoForCausalLM
-
 
 
 def QK(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
@@ -96,7 +97,9 @@ def MLPbias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].mlp.c_proj.bias.data.numpy()
 
 
-def layernorm_biases(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
+def layernorm_biases(
+    model: GPTNeoForCausalLM, layer: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Extracts the layer norm biases from a given layer of the model."""
     config = model.config
 

@@ -26,9 +26,7 @@ class SVD:
         if len(M.shape) == 1:
             norm = np.linalg.norm(M)
             return SVD(
-                M / norm,
-                np.array([norm], dtype=M.dtype),
-                np.array([1], dtype=M.dtype)
+                M / norm, np.array([norm], dtype=M.dtype), np.array([1], dtype=M.dtype)
             )
 
         U, S, Vt = np.linalg.svd(M, full_matrices=False)
@@ -54,7 +52,7 @@ class SVD:
 
     def full(self: SVD) -> np.ndarray:
         return (self.U * self.S) @ self.Vt
-    
+
     def __repr__(self: SVD) -> str:
         return f"SVD <U: {self.U.shape}, S: {self.S.shape}, Vt: {self.Vt.shape}>"
 
