@@ -1,4 +1,6 @@
 """ParameterBag - an abstraction for fetching parameters from multiple model types."""
+from __future__ import annotations
+
 import time
 import json
 from functools import lru_cache

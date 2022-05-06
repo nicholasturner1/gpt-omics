@@ -3,6 +3,8 @@
 These functions are slower than running the actual model, but offer flexibility
 for analysis.
 """
+from __future__ import annotations
+
 import torch
 import numpy as np
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoForCausalLM
