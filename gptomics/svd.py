@@ -23,6 +23,14 @@ class SVD:
 
     @classmethod
     def frommatrix(cls: SVD, M: np.ndarray) -> SVD:
+        if len(M.shape) == 1:
+            norm = np.linalg.norm(M)
+            return SVD(
+                M / norm,
+                np.array([norm], dtype=M.dtype),
+                np.array([1], dtype=M.dtype)
+            )
+
         U, S, Vt = np.linalg.svd(M, full_matrices=False)
         return SVD(U, S, Vt)
 
