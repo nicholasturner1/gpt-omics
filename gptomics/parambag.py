@@ -1,8 +1,8 @@
 """ParameterBag - an abstraction for fetching parameters from multiple model types."""
 from __future__ import annotations
 
-import time
 import json
+from typing import Union
 from functools import lru_cache
 from types import SimpleNamespace
 
@@ -18,66 +18,99 @@ class ParamBag:
     def __init__(self):
         pass
 
-    def QK(self, layer: int, head: int) -> np.ndarray:
+    def QK(
+        self, layer: int, head: int, factored: bool = False
+    ) -> Union[SVD, np.ndarray]:
         """Extracts the QK matrix from a model."""
         raise NotImplemented()
 
-    def OV(self, layer: int, head: int) -> np.ndarray:
+    def OV(
+        self, layer: int, head: int, factored: bool = False
+    ) -> Union[SVD, np.ndarray]:
         """Extracts the OV matrix from a model."""
         raise NotImplemented()
 
-    def Obias(self, layer: int) -> np.ndarray:
+    def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the output bias vector from a model (if it exists)."""
         raise NotImplemented()
 
-    def MLPin(self, layer: int) -> np.ndarray:
+    def MLPin(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP input matrix from a model."""
         raise NotImplemented()
 
-    def MLPout(self, layer: int) -> np.ndarray:
+    def MLPout(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP output matrix from a model."""
         raise NotImplemented()
 
-    def MLPbias_in(self, layer: int) -> np.ndarray:
+    def MLPbias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP input bias from a model."""
         raise NotImplemented()
 
-    def MLPbias_out(self, layer: int) -> np.ndarray:
+    def MLPbias_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP output bias from a model."""
         raise NotImplemented()
 
-    def layernorm_biases(self, layer: int) -> tuple[np.ndarray, np.ndarray]:
+    def layernorm_biases(
+        self, layer: int, factored: bool = False
+    ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
         """Extracts the Layer norm biases from a model."""
         raise NotImplemented()
 
+    def maybe_factor(
+        self, factor: bool = True, *Ms: np.ndarray
+    ) -> Union[SVD, np.ndarray]:
+        """Factors the matrix using an SVD if desired."""
+        if factor:
+            return SVD.frommatrices(*Ms)
+        else:
+            base = Ms[0]
+
+            for extramat in Ms[1:]:
+                base = base @ extramat
+
+            return base
+
 
 class HuggingFaceBag(ParamBag):
+    """A parameter bag for using GPT-Neo through HuggingFace."""
+
     def __init__(self, modelname: str):
+        super().__init__()
         self.model = transformersio.load_model(modelname)
 
-    def QK(self, layer: int, head: int) -> np.ndarray:
-        return gptneo.QK(self.model, layer, head)
+    def QK(
+        self, layer: int, head: int, factored: bool = False
+    ) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.QK(self.model, layer, head))
 
-    def OV(self, layer: int, head: int) -> np.ndarray:
-        return gptneo.OV(self.model, layer, head)
+    def OV(
+        self, layer: int, head: int, factored: bool = False
+    ) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.OV(self.model, layer, head))
 
-    def Obias(self, layer: int) -> np.ndarray:
-        return gptneo.Obias(self.model, layer, head)
+    def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.Obias(self.model, layer))
 
-    def MLPin(self, layer: int) -> np.ndarray:
-        return gptneo.MLPin(self.model, layer)
+    def MLPin(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.MLPin(self.model, layer))
 
-    def MLPout(self, layer: int) -> np.ndarray:
-        return gptneo.MLPout(self.model, layer)
+    def MLPout(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.MLPout(self.model, layer))
 
-    def MLPbias_in(self, layer: int) -> np.ndarray:
-        return gptneo.MLPbias_in(self.model, layer)
+    def MLPbias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.MLPbias_in(self.model, layer))
 
-    def MLPbias_out(self, layer: int) -> np.ndarray:
-        return gptneo.MLPbias_out(self.model, layer)
+    def MLPbias_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.MLPbias_out(self.model, layer))
 
-    def layernorm_biases(self, layer: int) -> tuple[np.ndarray, np.ndarray]:
-        return gptneo.layernorm_biases(self.model, layer)
+    def layernorm_biases(
+        self, layer: int, factored: bool = False
+    ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
+        biases = gptneo.layernorm_biases(self.model, layer)
+        return (
+            self.maybe_factor(factored, biases[0]),
+            self.maybe_factor(factored, biases[1]),
+        )
 
 
 class CachedFileBag(ParamBag):
@@ -88,6 +121,7 @@ class CachedFileBag(ParamBag):
     """
 
     def __init__(self, config_filename: str, param_filename: str):
+        super().__init__()
         self.config = self.read_config(config_filename)
         self.param_filename = param_filename
         self.tensor_names = torchio.read_tensor_names(param_filename)
@@ -116,7 +150,9 @@ class CachedFileBag(ParamBag):
 class GPTJBag(CachedFileBag):
     """A CachedFileBag for interacting with GPT-J."""
 
-    def QK(self, layer: int, head: int, factored: bool = True) -> np.ndarray:
+    def QK(
+        self, layer: int, head: int, factored: bool = True
+    ) -> Union[SVD, np.ndarray]:
         assert head < self.config.n_head, f"head #{head} does not exist"
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -128,12 +164,12 @@ class GPTJBag(CachedFileBag):
 
         Q = Qf[head * head_dim : (head + 1) * head_dim, :]
         K = Kf[head * head_dim : (head + 1) * head_dim, :]
-        if factored:
-            return SVD.frommatrix(Q).T @ SVD.frommatrix(K)
-        else:
-            return Q.T @ K
 
-    def OV(self, layer: int, head: int, factored: bool = True) -> np.ndarray:
+        return self.maybe_factor(factored, Q.T, K)
+
+    def OV(
+        self, layer: int, head: int, factored: bool = True
+    ) -> Union[SVD, np.ndarray]:
         assert head < self.config.n_head, f"head #{head} does not exist"
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -145,62 +181,46 @@ class GPTJBag(CachedFileBag):
 
         O = Of[head * head_dim : (head + 1) * head_dim, :]
         V = Vf[head * head_dim : (head + 1) * head_dim, :]
-        if factored:
-            return SVD.frommatrix(O).T @ SVD.frommatrix(V)
-        else:
-            return O @ V
 
-    def Obias(self, layer: int) -> np.ndarray:
+        return self.maybe_factor(factored, O, V)
+
+    def Obias(self, layer: int) -> None:
         return None
 
-    def MLPin(self, layer: int, factored: bool = True) -> np.ndarray:
+    def MLPin(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.weight")
 
-        if factored:
-            return SVD.frommatrix(M)
-        else:
-            return M
+        return self.maybe_factor(factored, M)
 
-    def MLPout(self, layer: int, factored: bool = True) -> np.ndarray:
+    def MLPout(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_out.weight")
 
-        if factored:
-            return SVD.frommatrix(M)
-        else:
-            return M
+        return self.maybe_factor(factored, M)
 
-    def MLPbias_in(self, layer: int, factored: bool = True) -> np.ndarray:
+    def MLPbias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.bias")
 
-        if factored:
-            return SVD.frommatrix(M)
-        else:
-            return M
+        return self.maybe_factor(factored, M)
 
-    def MLPbias_out(self, layer: int, factored: bool = True) -> np.ndarray:
+    def MLPbias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_out.bias")
 
-        if factored:
-            return SVD.frommatrix(M)
-        else:
-            return M
+        return self.maybe_factor(factored, M)
 
     def layernorm_biases(
         self, layer: int, factored: bool = True
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
+        # only one bias for GPT-J since att and mlp applied in parallel
         bias = self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias")
 
-        if factored:
-            return SVD.frommatrix(M)
-        else:
-            return M
+        return self.maybe_factor(factored, bias)
