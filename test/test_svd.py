@@ -16,10 +16,7 @@ def check_svd(seed: Optional[int]):
     M2 = np.random.rand(10, 10)
 
     assert np.all(
-        np.isclose(
-            SVD.frommatrices(M1, M2).full(),
-            M1 @ M2,
-        )
+        np.isclose(SVD.frommatrices(M1, M2).full(), M1 @ M2)
     ), f"fails for seed {seed}"
 
 
