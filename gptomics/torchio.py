@@ -51,6 +51,11 @@ def read_tensors(filename: str, tensor_names: list[str]) -> dict[str, torch.tens
             return _read_tensors(zf, tensor_meta, tensor_names)
 
 
+def read_tensor(filename: str, tensor_name: str) -> torch.tensor:
+    """Reads a single tensor from pytorch_model.bin."""
+    return read_tensors(filename, [tensor_name])[tensor_name]
+
+
 def _read_tensor_metadata(zf) -> dict[str, tuple]:
     """Reads the stored metadata about each tensor within the zipfile."""
     loaded_keys = dict()
