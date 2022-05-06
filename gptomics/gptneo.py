@@ -133,6 +133,6 @@ def selfattention(
     """Computes the self-attention output for a set of inputs to a single head."""
     assert len(inputs.shape) == 2
 
-    OV = OV_simple(model, layer, head)
+    OVmat = OV(model, layer, head)
 
-    return OV @ inputs @ attentionweights(inputs, model, layer, head).T
+    return OVmat @ inputs @ attentionweights(inputs, model, layer, head).T
