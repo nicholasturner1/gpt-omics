@@ -8,8 +8,11 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from . import transformersio, gptneo, torchio
 from .svd import SVD
+from . import transformersio, gptneo, torchio
+
+
+GPTJ_CACHESIZE = 16
 
 
 class ParamBag:
@@ -150,6 +153,7 @@ class CachedFileBag(ParamBag):
 class GPTJBag(CachedFileBag):
     """A CachedFileBag for interacting with GPT-J."""
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def QK(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
@@ -167,6 +171,7 @@ class GPTJBag(CachedFileBag):
 
         return self.maybe_factor(factored, Q.T, K)
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def OV(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
@@ -184,9 +189,11 @@ class GPTJBag(CachedFileBag):
 
         return self.maybe_factor(factored, O, V)
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def Obias(self, layer: int) -> None:
         return None
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def MLPin(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -194,6 +201,7 @@ class GPTJBag(CachedFileBag):
 
         return self.maybe_factor(factored, M)
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def MLPout(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -201,6 +209,7 @@ class GPTJBag(CachedFileBag):
 
         return self.maybe_factor(factored, M)
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def MLPbias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -208,6 +217,7 @@ class GPTJBag(CachedFileBag):
 
         return self.maybe_factor(factored, M)
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def MLPbias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -215,6 +225,7 @@ class GPTJBag(CachedFileBag):
 
         return self.maybe_factor(factored, M)
 
+    @lru_cache(maxsize=GPTJ_CACHESIZE)
     def layernorm_biases(
         self, layer: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
