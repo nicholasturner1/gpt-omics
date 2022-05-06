@@ -17,7 +17,7 @@ class SVD:
         # "inner core" of the product, p -> prime
         Sp = (self.S[:, np.newaxis] * self.Vt) @ (other.U * other.S)
 
-        Up, Sp, Vtp = np.linalg.svd(Sp)
+        Up, Sp, Vtp = np.linalg.svd(Sp, full_matrices=False)
 
         return SVD(self.U @ Up, Sp, Vtp @ other.Vt)
 
