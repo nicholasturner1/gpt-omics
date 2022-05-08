@@ -26,7 +26,9 @@ class SVD:
         if len(M.shape) == 1:
             norm = np.linalg.norm(M)
             return SVD(
-                M / norm, np.array([norm], dtype=M.dtype), np.array([1], dtype=M.dtype)
+                (M / norm).reshape(-1, 1),
+                np.array([norm], dtype=M.dtype),
+                np.array([1], dtype=M.dtype).reshape(1, 1),
             )
 
         U, S, Vt = np.linalg.svd(M, full_matrices=False)
@@ -34,7 +36,7 @@ class SVD:
 
     @classmethod
     def frommatrices(cls: SVD, *Ms: list[np.ndarray]) -> SVD:
-        svds = [SVD(*np.linalg.svd(M, full_matrices=False)) for M in Ms]
+        svds = [SVD.frommatrix(M) for M in Ms]
 
         if len(svds) == 1:
             return svds[0]

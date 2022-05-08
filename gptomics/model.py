@@ -1,4 +1,9 @@
-"""ParameterBag - an abstraction for fetching parameters from multiple model types."""
+"""Model class
+
+Models are designed to achieve two functions:
+(1) Allow a user to easily extract parameters of interest
+(2) Expose the input/output relationships within its architecture
+"""
 from __future__ import annotations
 
 import json
@@ -15,7 +20,7 @@ from . import transformersio, gptneo, torchio
 GPTJ_CACHESIZE = 16
 
 
-class ParamBag:
+class Model:
     """ParameterBag virtual class."""
 
     def __init__(self):
@@ -59,6 +64,14 @@ class ParamBag:
         """Extracts the Layer norm biases from a model."""
         raise NotImplementedError
 
+    @property
+    def num_layers(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def num_heads(self) -> int:
+        raise NotImplementedError
+
     def maybe_factor(
         self, factor: bool = True, *Ms: np.ndarray
     ) -> Union[SVD, np.ndarray]:
@@ -73,9 +86,19 @@ class ParamBag:
 
             return base
 
+    def sends_input_to(
+        self: Model,
+        src_type: str,
+        src_layer: int,
+        dst_type: str,
+        dst_layer: int
+    ) -> bool:
+        """Exposes input/output relationships of a model's architecture."""
+        raise NotImplementedError
 
-class HuggingFaceBag(ParamBag):
-    """A parameter bag for using GPT-Neo through HuggingFace."""
+
+class GPTNeo_HF(Model):
+    """GPT-Neo through HuggingFace transformers."""
 
     def __init__(self, modelname: str):
         super().__init__()
@@ -84,12 +107,38 @@ class HuggingFaceBag(ParamBag):
     def QK(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.QK(self.model, layer, head))
+        config = self.model.config
+        head_dim = config.hidden_size // config.num_heads
+
+        assert head < config.num_heads
+        assert layer < config.num_layers
+
+        attention = self.model.transformer.h[layer].attn.attention
+        Q = attention.q_proj.weight.data.numpy()
+        K = attention.k_proj.weight.data.numpy()
+
+        Qh = Q[head * head_dim : (head + 1) * head_dim, :]
+        Kh = K[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, Qh.T, Kh)
 
     def OV(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.OV(self.model, layer, head))
+        config = self.model.config
+        head_dim = config.hidden_size // config.num_heads
+
+        assert head < config.num_heads
+        assert layer < config.num_layers
+
+        attention = self.model.transformer.h[layer].attn.attention
+        O = attention.out_proj.weight.data.numpy()
+        V = attention.v_proj.weight.data.numpy()
+
+        Oh = O[:, head * head_dim : (head + 1) * head_dim]
+        Vh = V[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, Oh, Vh)
 
     def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         return self.maybe_factor(factored, gptneo.Obias(self.model, layer))
@@ -115,8 +164,37 @@ class HuggingFaceBag(ParamBag):
             self.maybe_factor(factored, biases[1]),
         )
 
+    @property
+    def num_layers(self: Model) -> int:
+        return self.model.config.num_layers
 
-class CachedFileBag(ParamBag):
+    @property
+    def num_heads(self: Model) -> int:
+        return self.model.config.num_heads
+
+    def sends_input_to(
+        self: Model,
+        src_type: str,
+        src_layer: int,
+        dst_type: str,
+        dst_layer: int
+    ) -> bool:
+        if src_layer > dst_layer:
+            return False
+
+        elif src_layer == dst_layer:
+            # attention heads are first
+            if dst_type == "att_head":
+                return False
+
+            if dst_type == "mlp_weight":
+                return src_type in ["layernorm_bias1", "att_head"]
+
+        else:  # src_layer < dst_layer
+            return True
+
+
+class CachedFileModel(Model):
     """A parameter bag that reads tensors from a pytorch_model.bin file.
 
     See torchio. Tensors are cached when reading from disk to minimize
@@ -137,7 +215,7 @@ class CachedFileBag(ParamBag):
 
         return tensor.data.numpy()
 
-    def read_config(self: CachedFileBag, filename: str) -> SimpleNamespace:
+    def read_config(self: CachedFileModel, filename: str) -> SimpleNamespace:
         """Reads a config json file."""
         cfg = SimpleNamespace()
 
@@ -150,7 +228,7 @@ class CachedFileBag(ParamBag):
         return cfg
 
 
-class GPTJBag(CachedFileBag):
+class GPTJ(CachedFileModel):
     """A CachedFileBag for interacting with GPT-J."""
 
     @lru_cache(maxsize=GPTJ_CACHESIZE)
@@ -235,3 +313,28 @@ class GPTJBag(CachedFileBag):
         bias = self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias")
 
         return self.maybe_factor(factored, bias)
+
+    def sends_input_to(
+        self: Model,
+        src_type: str,
+        src_layer: int,
+        dst_type: str,
+        dst_layer: int
+    ) -> bool:
+        if src_layer > dst_layer:
+            return False
+
+        elif src_layer == dst_layer:
+            return src_type == "layernorm_bias"
+
+        else:  # src_layer < dst_layer
+            return True
+
+
+def model_by_name(modelname: str):
+    """Instantiate Models by simplified names using a default implementation."""
+    known_names = ["EleutherAI/gpt-neo-125M"]
+    assert modelname in known_names, f"unknown model name: {modelname}"
+
+    if modelname == "EleutherAI/gpt-neo-125M":
+        return GPTNeo_HF("EleutherAI/gpt-neo-125M")
