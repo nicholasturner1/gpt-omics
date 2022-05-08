@@ -329,3 +329,12 @@ class GPTJ(CachedFileModel):
 
         else:  # src_layer < dst_layer
             return True
+
+
+def model_by_name(modelname: str):
+    """Instantiate Models by simplified names using a default implementation."""
+    known_names = ["EleutherAI/gpt-neo-125M"]
+    assert modelname in known_names, f"unknown model name: {modelname}"
+
+    if modelname == "EleutherAI/gpt-neo-125M":
+        return GPTNeo_HF("EleutherAI/gpt-neo-125M")
