@@ -107,12 +107,38 @@ class GPTNeo_HF(Model):
     def QK(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.QK(self.model, layer, head))
+        config = self.model.config
+        head_dim = config.hidden_size // config.num_heads
+
+        assert head < config.num_heads
+        assert layer < config.num_layers
+
+        attention = self.model.transformer.h[layer].attn.attention
+        Q = attention.q_proj.weight.data.numpy()
+        K = attention.k_proj.weight.data.numpy()
+
+        Qh = Q[head * head_dim : (head + 1) * head_dim, :]
+        Kh = K[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, Qh.T, Kh)
 
     def OV(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.OV(self.model, layer, head))
+        config = self.model.config
+        head_dim = config.hidden_size // config.num_heads
+
+        assert head < config.num_heads
+        assert layer < config.num_layers
+
+        attention = self.model.transformer.h[layer].attn.attention
+        O = attention.out_proj.weight.data.numpy()
+        V = attention.v_proj.weight.data.numpy()
+
+        Oh = O[:, head * head_dim : (head + 1) * head_dim]
+        Vh = V[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, Oh, Vh)
 
     def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         return self.maybe_factor(factored, gptneo.Obias(self.model, layer))
