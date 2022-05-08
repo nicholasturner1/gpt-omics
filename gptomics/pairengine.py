@@ -47,7 +47,6 @@ def compute_pair_terms(
     """
     terms = list()
     num_layers = model.num_layers
-    #for layer in range(0, 1):
     for layer in range(0, num_layers - 1):
         terms.append(
             layer_output_terms(model, layer, f, colnames, Obiases, MLPs, LNs, verbose)
@@ -123,7 +122,6 @@ def layer_output_terms(
     else:
         ln_biases = None
 
-    #for dst_layer in range(src_layer, src_layer + 2):
     for dst_layer in range(src_layer, model.num_layers):
         if verbose:
             print(f"Computing terms between layers: {src_layer}->{dst_layer}", end="     \r")
