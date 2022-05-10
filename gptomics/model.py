@@ -262,13 +262,13 @@ class GPTJ(CachedFileModel):
 
         head_dim = self.config.n_embd // self.config.n_head
 
-        O = Of[head * head_dim : (head + 1) * head_dim, :]
+        O = Of[:, head * head_dim : (head + 1) * head_dim]
         V = Vf[head * head_dim : (head + 1) * head_dim, :]
 
         return self.maybe_factor(factored, O, V)
 
     @lru_cache(maxsize=GPTJ_CACHESIZE)
-    def Obias(self, layer: int) -> None:
+    def Obias(self, layer: int, factored: bool = True) -> None:
         return None
 
     @lru_cache(maxsize=GPTJ_CACHESIZE)
@@ -313,6 +313,14 @@ class GPTJ(CachedFileModel):
         bias = self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias")
 
         return self.maybe_factor(factored, bias)
+
+    @property
+    def num_layers(self: Model) -> int:
+        return self.config.n_layer
+
+    @property
+    def num_heads(self: Model) -> int:
+        return self.config.n_head
 
     def sends_input_to(
         self: Model,
