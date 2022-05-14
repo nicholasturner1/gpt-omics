@@ -158,3 +158,45 @@ def plot_grp_layerdist_hist(
     groupdf = df[df[grp_colname] == grp]
 
     return plot_layerdists(groupdf, color=color, ax=ax, fontsize=fontsize)
+
+
+def plot_ipc_percentiles(
+    percs: np.ndarray,
+    color="k",
+    ax: plt.Axes = None,
+    fontsize: int = DEFAULT_FONTSIZE,
+    **kwargs
+) -> plt.Axes:
+    """Plots the input path complexities over percentile threshold values.
+
+    See graph.ipc_percentiles for more information on the inputs to this function.
+
+    Args:
+        percs: The IPC values for each percentile threshold value (101 x 5) np.ndarray.
+        colors: The base color to use for the lines and shaded regions.
+        ax: The matplotlib axis to use when plotting.
+        fontsize: The axis fontsize.
+    Returns:
+        An axis filled with the desired plot.
+    """
+    ax = plt.gca() if ax is None else ax
+
+    assert percs.shape[1] == 5, "not sure what the columns refer to"
+
+    ax.plot(percs[:, 2], color)  # median
+    ax.plot(percs[:, 0], color, ls="--")  # min
+    ax.plot(percs[:, 4], color, ls="--")  # max
+
+    # IQR
+    ax.fill_between(
+        np.arange(percs.shape[0]),
+        percs[:, 1],
+        percs[:, 3],
+        alpha=0.4,
+        color=color,
+    )
+
+    ax.set_xlabel("Percentile threshold", fontsize=fontsize)
+    ax.set_ylabel("Input path complexity", fontsize=fontsize)
+
+    return ax
