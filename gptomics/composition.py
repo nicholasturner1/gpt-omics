@@ -3,10 +3,17 @@ from __future__ import annotations
 
 import numpy as np
 
+from .svd import SVD
 
-def frobnorm(A: np.ndarray) -> np.float32:
+
+def frobnorm(A: Union[np.ndarray, SVD]) -> np.float32:
     """Frobenius norm."""
-    return np.linalg.norm(A.ravel())
+    if isinstance(A, np.ndarray):
+        return np.linalg.norm(A.ravel())
+    elif isinstance(A, SVD):
+        return np.linalg.norm(A.S)
+    else:
+        raise ValueError(f"unexpected type {type(A)}")
 
 
 def removemean(M: np.ndarray, method="direct") -> np.ndarray:

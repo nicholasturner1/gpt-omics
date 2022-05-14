@@ -2,7 +2,7 @@
 
 Writes a pandas csv as output where each row specifies a single composition term.
 """
-import itertools
+import time
 from collections.abc import Iterable
 from typing import Callable, Optional, Union
 
@@ -36,7 +36,7 @@ def compute_pair_terms(
     Obiases: bool = True,
     MLPs: bool = True,
     LNs: bool = True,
-    verbose: bool = True,
+    verbose: int = 1,
 ) -> pd.DataFrame:
     """Computes f across all input/output pairs within a model.
 
@@ -46,8 +46,7 @@ def compute_pair_terms(
         A dataframe that describes each composition term.
     """
     terms = list()
-    num_layers = model.num_layers
-    for layer in range(0, num_layers - 1):
+    for layer in range(0, model.num_layers):
         terms.append(
             layer_output_terms(model, layer, f, colnames, Obiases, MLPs, LNs, verbose)
         )
@@ -65,7 +64,7 @@ def layer_output_terms(
     Obiases: bool = True,
     MLPs: bool = True,
     LNs: bool = True,
-    verbose: bool = True,
+    verbose: int = 1,
 ) -> pd.DataFrame:
     """Computes f across all outputs of a given layer.
 
@@ -80,6 +79,9 @@ def layer_output_terms(
     num_heads = model.num_heads
 
     # Extracting output parameters from the model
+    if verbose > 1:
+        begin = time.time()
+        print("Extracting OVs")
     OVs = [
         comp.removemean(
             model.OV(src_layer, head, factored=True), method="matrix multiply"
@@ -88,6 +90,8 @@ def layer_output_terms(
     ]
 
     if Obiases:
+        if verbose > 1:
+            print("Extracting Obiases")
         Obias = comp.removemean(
             model.Obias(src_layer, factored=True), method="matrix multiply"
         )
@@ -95,6 +99,8 @@ def layer_output_terms(
         Obias = None
 
     if MLPs:
+        if verbose > 1:
+            print("Extracting MLPs")
         MLPout = comp.removemean(
             model.MLPout(src_layer, factored=True), method="matrix multiply"
         )
@@ -109,6 +115,8 @@ def layer_output_terms(
     # being read by another layer, so they should only be
     # centered once they do.
     if LNs:
+        if verbose > 1:
+            print("Extracting LNs")
         ln_biases = model.layernorm_biases(src_layer, factored=True)
         if not isGPTJ(model):
             ln_biases = (
@@ -122,9 +130,16 @@ def layer_output_terms(
     else:
         ln_biases = None
 
+    if verbose > 1:
+        end = time.time()
+        print(f"Output parameter loading finished in {end-begin:.3f}s")
+
     for dst_layer in range(src_layer, model.num_layers):
         if verbose:
-            print(f"Computing terms between layers: {src_layer}->{dst_layer}", end="     \r")
+            print(
+                f"Computing terms between layers: {src_layer}->{dst_layer}",
+                end="     \r",
+            )
         new_rows = layer_input_terms(
             model, src_layer, dst_layer, f, MLPs, OVs, Obias, MLPout, MLPbias, ln_biases
         )
@@ -149,6 +164,8 @@ def layer_output_terms(
                     ln_biases[0],
                     comp.removemean(ln_biases[0], method="matrix multiply"),
                 )
+    if verbose:
+        print("")
 
     rowdict = {i: row for (i, row) in enumerate(rows)}
     return pd.DataFrame.from_dict(rowdict, orient="index", columns=colnames)
