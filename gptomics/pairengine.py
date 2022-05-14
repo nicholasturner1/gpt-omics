@@ -36,7 +36,7 @@ def compute_pair_terms(
     Obiases: bool = True,
     MLPs: bool = True,
     LNs: bool = True,
-    verbose: bool = True,
+    verbose: int = 1,
 ) -> pd.DataFrame:
     """Computes f across all input/output pairs within a model.
 
@@ -64,7 +64,7 @@ def layer_output_terms(
     Obiases: bool = True,
     MLPs: bool = True,
     LNs: bool = True,
-    verbose: bool = True,
+    verbose: int = 1,
 ) -> pd.DataFrame:
     """Computes f across all outputs of a given layer.
 
@@ -79,7 +79,7 @@ def layer_output_terms(
     num_heads = model.num_heads
 
     # Extracting output parameters from the model
-    if verbose:
+    if verbose > 1:
         begin = time.time()
         print("Extracting OVs")
     OVs = [
@@ -90,7 +90,7 @@ def layer_output_terms(
     ]
 
     if Obiases:
-        if verbose:
+        if verbose > 1:
             print("Extracting Obiases")
         Obias = comp.removemean(
             model.Obias(src_layer, factored=True), method="matrix multiply"
@@ -99,7 +99,7 @@ def layer_output_terms(
         Obias = None
 
     if MLPs:
-        if verbose:
+        if verbose > 1:
             print("Extracting MLPs")
         MLPout = comp.removemean(
             model.MLPout(src_layer, factored=True), method="matrix multiply"
@@ -115,7 +115,7 @@ def layer_output_terms(
     # being read by another layer, so they should only be
     # centered once they do.
     if LNs:
-        if verbose:
+        if verbose > 1:
             print("Extracting LNs")
         ln_biases = model.layernorm_biases(src_layer, factored=True)
         if not isGPTJ(model):
@@ -130,7 +130,7 @@ def layer_output_terms(
     else:
         ln_biases = None
 
-    if verbose:
+    if verbose > 1:
         end = time.time()
         print(f"Output parameter loading finished in {end-begin:.3f}s")
 
