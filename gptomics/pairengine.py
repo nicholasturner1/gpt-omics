@@ -37,6 +37,7 @@ def compute_pair_terms(
     MLPs: bool = True,
     LNs: bool = True,
     verbose: int = 1,
+    reverse: bool = False,
 ) -> pd.DataFrame:
     """Computes f across all input/output pairs within a model.
 
@@ -46,9 +47,15 @@ def compute_pair_terms(
         A dataframe that describes each composition term.
     """
     terms = list()
-    for layer in range(0, model.num_layers):
+    layers = range(0, model.num_layers)
+    if reverse:
+        layers = reversed(layers)
+
+    for layer in layers:
         terms.append(
-            layer_output_terms(model, layer, f, colnames, Obiases, MLPs, LNs, verbose)
+            layer_output_terms(
+                model, layer, f, colnames, Obiases, MLPs, LNs, verbose, reverse
+            )
         )
     if verbose:
         print("")
@@ -65,6 +72,7 @@ def layer_output_terms(
     MLPs: bool = True,
     LNs: bool = True,
     verbose: int = 1,
+    reverse: bool = False,
 ) -> pd.DataFrame:
     """Computes f across all outputs of a given layer.
 
@@ -134,14 +142,29 @@ def layer_output_terms(
         end = time.time()
         print(f"Output parameter loading finished in {end-begin:.3f}s")
 
-    for dst_layer in range(src_layer, model.num_layers):
+    if not reverse:
+        dst_layers = range(src_layer, model.num_layers)
+    else:
+        dst_layers = reversed(range(0, src_layer))
+
+    for dst_layer in dst_layers:
         if verbose:
             print(
                 f"Computing terms between layers: {src_layer}->{dst_layer}",
                 end="     \r",
             )
         new_rows = layer_input_terms(
-            model, src_layer, dst_layer, f, MLPs, OVs, Obias, MLPout, MLPbias, ln_biases
+            model,
+            src_layer,
+            dst_layer,
+            f,
+            MLPs,
+            OVs,
+            Obias,
+            MLPout,
+            MLPbias,
+            ln_biases,
+            reverse,
         )
         rows.extend(new_rows)
 
@@ -157,7 +180,8 @@ def layer_output_terms(
                     ln_biases[1],
                 )
 
-        if src_layer == dst_layer - 1:
+        # abs accounts for reversed terms
+        if abs(src_layer - dst_layer) == 1:
             if not isGPTJ(model):
                 # 2nd bias normalized within input_terms for this layer
                 ln_biases = (
@@ -182,6 +206,7 @@ def layer_input_terms(
     MLPout: Optional[np.ndarray] = None,
     MLPbias: Optional[np.ndarray] = None,
     ln_biases: Optional[Union[tuple[np.ndarray, np.ndarray], np.ndarray]] = None,
+    reverse: bool = False,
 ) -> list[list]:
     """Computes f across all inputs of a given layer.
 
@@ -206,19 +231,26 @@ def layer_input_terms(
         if ln_biases is not None:
             defined.append("layernorm_bias")
 
-        return any(
-            model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
-            for src_type in defined
-        )
+        if not reverse:
+            return any(
+                model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+                for src_type in defined
+            )
+        else:
+            return any(
+                model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
+                for src_type in defined
+            )
 
     if takes_any_input("att_head"):
         rows.extend(
             att_head_input_terms(
-                model, src_layer, dst_layer, f, OVs, Obias, MLPout, MLPbias, ln_biases
+                model, src_layer, dst_layer, f, OVs, Obias, MLPout, MLPbias, ln_biases, reverse
             )
         )
 
-    if src_layer == dst_layer - 1 and not isGPTJ(model):
+    # abs accounts for reversed terms
+    if abs(src_layer - dst_layer) == 1 and not isGPTJ(model):
         # center second LN bias
         ln_biases = (
             ln_biases[0],
@@ -228,7 +260,7 @@ def layer_input_terms(
     if computeMLPterms and takes_any_input("mlp_weight"):
         rows.extend(
             mlp_input_terms(
-                model, src_layer, dst_layer, f, OVs, Obias, MLPout, MLPbias, ln_biases
+                model, src_layer, dst_layer, f, OVs, Obias, MLPout, MLPbias, ln_biases, reverse
             )
         )
 
@@ -245,6 +277,7 @@ def mlp_input_terms(
     MLPout: Optional[np.ndarray] = None,
     MLPbias: Optional[np.ndarray] = None,
     ln_biases: Optional[Union[tuple[np.ndarray, np.ndarray], np.ndarray]] = None,
+    reverse: bool = False,
 ) -> list[list]:
     """"""
     rows = list()
@@ -256,7 +289,10 @@ def mlp_input_terms(
     term_type = "mlp"
 
     def mlp_takes_input(src_type):
-        return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+        if not reverse:
+            return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+        else:
+            return model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
 
     def compute_term(
         src_M: np.ndarray, src_type: str, src_index: int = 0,
@@ -312,6 +348,7 @@ def att_head_input_terms(
     MLPout: Optional[np.ndarray] = None,
     MLPbias: Optional[np.ndarray] = None,
     ln_biases: Optional[Union[tuple[np.ndarray, np.ndarray], np.ndarray]] = None,
+    reverse: bool = False,
 ) -> list[list]:
     """"""
 
@@ -322,7 +359,10 @@ def att_head_input_terms(
 
     # Convenience functions
     def att_takes_input(src_type):
-        return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+        if not reverse:
+            return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+        else:
+            return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
 
     def _make_rows(
         term_value,
