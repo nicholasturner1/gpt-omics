@@ -18,6 +18,7 @@ def main(
     MLPs: bool = True,
     LNs: bool = True,
     verbose: bool = True,
+    reverse: bool = False,
 ) -> None:
     m = model.model_by_name(modelname)
 
@@ -26,7 +27,13 @@ def main(
         begin = time.time()
 
     df = pairengine.compute_pair_terms(
-        m, composition, Obiases=Obiases, MLPs=MLPs, LNs=LNs, verbose=verbose
+        m,
+        composition,
+        Obiases=Obiases,
+        MLPs=MLPs,
+        LNs=LNs,
+        verbose=verbose,
+        reverse=reverse,
     )
 
     if verbose:
@@ -56,9 +63,7 @@ def writeterms(df, outputfilename: str) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
 
-    ap.add_argument(
-        "modelname", type=str, help="model name in HuggingFace transformers"
-    )
+    ap.add_argument("modelname", type=str, help="model name")
     ap.add_argument("outputfilename", type=str, help="output filename")
     ap.add_argument(
         "--no_Obiases",
@@ -80,6 +85,12 @@ if __name__ == "__main__":
         dest="verbose",
         action="store_false",
         help="Do not print progress messages",
+    )
+    ap.add_argument(
+        "--reverse",
+        dest="verbose",
+        action="store_true",
+        help="Compute reverse edges instead of forward edges.",
     )
 
     main(**vars(ap.parse_args()))
