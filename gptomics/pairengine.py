@@ -145,7 +145,7 @@ def layer_output_terms(
     if not reverse:
         dst_layers = range(src_layer, model.num_layers)
     else:
-        dst_layers = reversed(range(0, src_layer))
+        dst_layers = reversed(range(0, src_layer + 1))
 
     for dst_layer in dst_layers:
         if verbose:
@@ -362,7 +362,7 @@ def att_head_input_terms(
         if not reverse:
             return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
         else:
-            return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+            return model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
 
     def _make_rows(
         term_value,
