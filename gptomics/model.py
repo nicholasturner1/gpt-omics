@@ -17,11 +17,11 @@ from .svd import SVD
 from . import transformersio, gptneo, torchio
 
 
-GPTJ_CACHESIZE = 16
+CACHESIZE = 16
 
 
 class Model:
-    """ParameterBag virtual class."""
+    """Model virtual class."""
 
     def __init__(self):
         pass
@@ -87,11 +87,7 @@ class Model:
             return base
 
     def sends_input_to(
-        self: Model,
-        src_type: str,
-        src_layer: int,
-        dst_type: str,
-        dst_layer: int
+        self: Model, src_type: str, src_layer: int, dst_type: str, dst_layer: int
     ) -> bool:
         """Exposes input/output relationships of a model's architecture."""
         raise NotImplementedError
@@ -173,11 +169,7 @@ class GPTNeo_HF(Model):
         return self.model.config.num_heads
 
     def sends_input_to(
-        self: Model,
-        src_type: str,
-        src_layer: int,
-        dst_type: str,
-        dst_layer: int
+        self: Model, src_type: str, src_layer: int, dst_type: str, dst_layer: int
     ) -> bool:
         if src_layer > dst_layer:
             return False
@@ -202,7 +194,6 @@ class CachedFileModel(Model):
     """
 
     def __init__(self, config_filename: str, param_filename: str):
-        super().__init__()
         self.config = self.read_config(config_filename)
         self.param_filename = param_filename
         self.tensor_names = torchio.read_tensor_names(param_filename)
@@ -229,9 +220,9 @@ class CachedFileModel(Model):
 
 
 class GPTJ(CachedFileModel):
-    """A CachedFileBag for interacting with GPT-J."""
+    """A CachedFileModel for interacting with GPT-J."""
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def QK(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
@@ -249,7 +240,7 @@ class GPTJ(CachedFileModel):
 
         return self.maybe_factor(factored, Q.T, K)
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def OV(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
@@ -267,11 +258,11 @@ class GPTJ(CachedFileModel):
 
         return self.maybe_factor(factored, O, V)
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def Obias(self, layer: int, factored: bool = True) -> None:
         return None
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def MLPin(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -279,7 +270,7 @@ class GPTJ(CachedFileModel):
 
         return self.maybe_factor(factored, M)
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def MLPout(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -287,7 +278,7 @@ class GPTJ(CachedFileModel):
 
         return self.maybe_factor(factored, M)
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def MLPbias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -295,7 +286,7 @@ class GPTJ(CachedFileModel):
 
         return self.maybe_factor(factored, M)
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def MLPbias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
@@ -303,7 +294,7 @@ class GPTJ(CachedFileModel):
 
         return self.maybe_factor(factored, M)
 
-    @lru_cache(maxsize=GPTJ_CACHESIZE)
+    @lru_cache(maxsize=CACHESIZE)
     def layernorm_biases(
         self, layer: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
@@ -323,11 +314,7 @@ class GPTJ(CachedFileModel):
         return self.config.n_head
 
     def sends_input_to(
-        self: Model,
-        src_type: str,
-        src_layer: int,
-        dst_type: str,
-        dst_layer: int
+        self: Model, src_type: str, src_layer: int, dst_type: str, dst_layer: int
     ) -> bool:
         if src_layer > dst_layer:
             return False
@@ -337,6 +324,106 @@ class GPTJ(CachedFileModel):
 
         else:  # src_layer < dst_layer
             return True
+
+
+class GPTNeo(CachedFileModel, GPTNeo_HF):
+    """A CachedFileModel for interacting with GPT-Neo models."""
+
+    @lru_cache(maxsize=CACHESIZE)
+    def QK(
+        self, layer: int, head: int, factored: bool = True
+    ) -> Union[SVD, np.ndarray]:
+        assert head < self.num_heads, f"head #{head} does not exist"
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+        head_dim = self.config.hidden_size // self.config.num_heads
+
+        # _f : the "full" set of parameters across heads
+        Qf = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.q_proj.weight")
+        Kf = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.k_proj.weight")
+
+        Q = Qf[head * head_dim : (head + 1) * head_dim, :]
+        K = Kf[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, Q.T, K)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def OV(
+        self, layer: int, head: int, factored: bool = True
+    ) -> Union[SVD, np.ndarray]:
+        assert head < self.num_heads, f"head #{head} does not exist"
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+        head_dim = self.config.hidden_size // self.config.num_heads
+
+        # _f : the "full" set of parameters across heads
+        Of = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.out_proj.weight")
+        Vf = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.v_proj.weight")
+
+        O = Of[:, head * head_dim : (head + 1) * head_dim]
+        V = Vf[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, O, V)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        Obias = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.out_proj.bias")
+
+        return self.maybe_factor(factored, Obias)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def MLPin(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+
+        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_fc.weight")
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def MLPout(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+
+        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_proj.weight")
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def MLPbias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+
+        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_fc.bias")
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def MLPbias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+
+        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_proj.bias")
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def layernorm_biases(
+        self, layer: int, factored: bool = True
+    ) -> Union[SVD, np.ndarray]:
+        assert layer < self.num_layers, f"layer #{layer} does not exist"
+
+        biases = (
+            self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias"),
+            self.fetch_tensor(f"transformer.h.{layer}.ln_2.bias"),
+        )
+
+        return (
+            self.maybe_factor(factored, biases[0]),
+            self.maybe_factor(factored, biases[1]),
+        )
+
+    @property
+    def num_layers(self: Model) -> int:
+        return self.config.num_layers
+
+    @property
+    def num_heads(self: Model) -> int:
+        return self.config.num_heads
 
 
 def model_by_name(modelname: str):
