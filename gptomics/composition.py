@@ -6,14 +6,24 @@ import numpy as np
 from .svd import SVD
 
 
-def frobnorm(A: Union[np.ndarray, SVD]) -> np.float32:
+def frobnorm(M: Union[np.ndarray, SVD]) -> np.float32:
     """Frobenius norm."""
-    if isinstance(A, np.ndarray):
-        return np.linalg.norm(A.ravel())
-    elif isinstance(A, SVD):
-        return np.linalg.norm(A.S)
+    if isinstance(M, np.ndarray):
+        return np.linalg.norm(M.ravel())
+    elif isinstance(M, SVD):
+        return np.linalg.norm(M.S)
     else:
-        raise ValueError(f"unexpected type {type(A)}")
+        raise ValueError(f"unexpected type {type(M)}")
+
+
+def singularvals(M: Union[np.ndarray, SVD]) -> np.ndarray:
+    """Singular values."""
+    if isinstance(M, np.ndarray):
+        return np.linalg.svd(M, full_matrices=False)[1]
+    elif isinstance(M, SVD):
+        return M.S
+    else:
+        raise ValueError(f"unexpected type {type(M)}")
 
 
 def removemean(M: np.ndarray, method="direct") -> np.ndarray:
@@ -35,13 +45,41 @@ def removemean(M: np.ndarray, method="direct") -> np.ndarray:
 
 
 def basecomposition(
-    dst_M: np.ndarray, src_M: np.ndarray, center: bool = True
+    dst_M: np.ndarray, src_M: np.ndarray, center: bool = True, wikidenom: bool = False,
 ) -> np.float32:
     """Computes composition assuming that the matrices are properly transposed."""
     if center:
         src_M = removemean(src_M)
 
-    return frobnorm(dst_M @ src_M) / (frobnorm(dst_M) * frobnorm(src_M))
+    numerator = frobnorm(dst_M @ src_M)
+
+    if not wikidenom:
+        denominator = frobnorm(dst_M) * frobnorm(src_M)
+    else:
+        denominator = np.linalg.norm(singularvals(dst_M) * singularvals(src_M))
+
+    return numerator / denominator
+
+
+def composition_singularvals(
+    dst_M: np.ndarray,
+    src_M: np.ndarray,
+    center: bool = True,
+    normalize: bool = True,
+    wikidenom: bool = False,
+) -> np.ndarray:
+    """Computes the singular values from composition (but doesn't collapse them)."""
+    if center:
+        src_M = removemean(src_M)
+
+    values = singularvals(dst_M @ src_M)
+
+    if normalize and not wikidenom:
+        values /= (frobnorm(dst_M) * frobnorm(src_M))
+    elif normalize:
+        values /= np.linalg.norm(singularvals(dst_M) * singularvals(src_M))
+
+    return values
 
 
 def Qcomposition(

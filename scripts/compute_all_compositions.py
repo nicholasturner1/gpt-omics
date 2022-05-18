@@ -4,10 +4,11 @@ Writes a pandas csv as output where each row specifies a single composition term
 """
 import time
 import argparse
+from functools import partial
 
 import numpy as np
 
-from gptomics import model, pairengine
+from gptomics import model, pairengine, composition as comp
 from gptomics.svd import SVD
 
 
@@ -26,14 +27,10 @@ def main(
         print("Starting pair term engine")
         begin = time.time()
 
+    f = partial(comp.basecomposition, center=False)
+
     df = pairengine.compute_pair_terms(
-        m,
-        composition,
-        Obiases=Obiases,
-        MLPs=MLPs,
-        LNs=LNs,
-        verbose=verbose,
-        reverse=reverse,
+        m, f, Obiases=Obiases, MLPs=MLPs, LNs=LNs, verbose=verbose, reverse=reverse,
     )
 
     if verbose:
@@ -41,13 +38,6 @@ def main(
         print(f"Pair engine computation complete in {end-begin:.3f}s")
 
     writeterms(df, outputfilename)
-
-
-def composition(dst_M: SVD, src_M: SVD):
-    numerator = np.linalg.norm((dst_M @ src_M).S)
-    denominator = np.linalg.norm(dst_M.S) * np.linalg.norm(src_M.S)
-
-    return numerator / denominator
 
 
 def writeterms(df, outputfilename: str) -> None:
@@ -88,7 +78,6 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--reverse",
-        dest="verbose",
         action="store_true",
         help="Compute reverse edges instead of forward edges.",
     )
