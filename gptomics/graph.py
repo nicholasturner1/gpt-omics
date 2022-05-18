@@ -1,5 +1,5 @@
 """Graph analysis utilities."""
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Generator, Union
 
 import numpy as np
 import pandas as pd
@@ -127,7 +127,7 @@ def filter_edges_by_arr(g: gt.Graph, edgefilter: np.ndarray) -> gt.Graph:
 
 def filter_verts_by_arr(g: gt.Graph, vertexfilter: np.ndarray) -> gt.Graph:
     """Applies a numpy arr vertex filter to a graph."""
-    filterprop = g.new_edge_property("bool")
+    filterprop = g.new_vertex_property("bool")
     filterprop.a = vertexfilter
 
     g.set_vertex_filter(filterprop)
@@ -192,21 +192,27 @@ def input_path_complexities(g: gt.Graph) -> list[float]:
 
 
 def ipc_percentiles(
-    g: gt.Graph, percs: list[int], vertex_mask: Optional[np.ndarray] = None
+    gs: Union[gt.Graph, Generator[gt.Graph, None, None]],
+    percs: Optional[list[int]] = [0, 25, 50, 75, 100],
+    vertex_mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Computes IPC percentiles over all (whole) term_value percentiles."""
-    value_percs = np.percentile(g.edge_properties["term_value"].a, np.arange(101))
+    """Computes IPC percentiles over all graphs in the passed generator."""
 
-    ipc_percs = list()
-    for v in value_percs:
-        g = threshold_value(g, v)
-
+    def compute_percentiles(g):
         cs = input_path_complexities(g)
+
         if vertex_mask is not None:
             cs = cs[vertex_mask]
         cs = cs[cs != -1]
 
-        ipc_percs.append(np.percentile(cs, percs))
+        return np.percentile(cs, percs)
+
+    if isinstance(gs, gt.Graph):
+        return np.array([compute_complexities(g)])
+
+    ipc_percs = list()
+    for g in gs:
+        ipc_percs.append(compute_percentiles(g))
 
     return np.array(ipc_percs)
 
@@ -242,3 +248,36 @@ def all_paths(g: gt.Graph, verbose: bool = True) -> list[list[int]]:
         all_paths += node_paths
 
     return all_paths
+
+
+def random_removal(g: gt.Graph) -> Generator[gt.Graph, None, None]:
+    perm = np.random.permutation(np.arange(len(g.get_edges())))
+    mask = np.ones((len(perm),), dtype=np.bool)
+
+    # return the full graph first
+    g.set_edge_filter(None)
+    yield g
+
+    edges_per_percentile = int(np.ceil(len(perm) / 100))
+    for i in range(100):
+        inds = perm[i * edges_per_percentile: (i + 1) * edges_per_percentile]
+        mask[inds] = False
+        filter_edges_by_arr(g, mask)
+
+        yield g
+
+    g.set_edge_filter(None)
+
+
+def value_perc_thresholds(g: gt.Graph) -> Generator[gt.Graph, None, None]:
+    """Computes IPC percentiles over all (whole) term_value percentiles."""
+    value_percs = np.percentile(g.edge_properties["term_value"].a, np.arange(100) + 1)
+
+    # return the full graph first
+    g.set_edge_filter(None)
+    yield g
+
+    for v in value_percs:
+        yield threshold_value(g, v)
+
+    g.set_edge_filter(None)
