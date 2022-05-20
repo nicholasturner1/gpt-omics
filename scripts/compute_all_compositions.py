@@ -20,6 +20,7 @@ def main(
     LNs: bool = True,
     verbose: bool = True,
     reverse: bool = False,
+    wikidenom: bool = False,
 ) -> None:
     m = model.model_by_name(modelname)
 
@@ -27,7 +28,7 @@ def main(
         print("Starting pair term engine")
         begin = time.time()
 
-    f = partial(comp.basecomposition, center=False)
+    f = partial(comp.basecomposition, center=False, wikidenom=wikidenom)
 
     df = pairengine.compute_pair_terms(
         m, f, Obiases=Obiases, MLPs=MLPs, LNs=LNs, verbose=verbose, reverse=reverse,
@@ -78,6 +79,11 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--reverse",
+        action="store_true",
+        help="Compute reverse edges instead of forward edges.",
+    )
+    ap.add_argument(
+        "--wikidenom",
         action="store_true",
         help="Compute reverse edges instead of forward edges.",
     )
