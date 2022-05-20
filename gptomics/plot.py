@@ -10,6 +10,76 @@ DEFAULT_FONTSIZE = 20
 COLORS = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
 
+def filterdf(
+    df: pd.DataFrame,
+    src_layer: Optional[int] = None,
+    dst_layer: Optional[int] = None,
+    src_type: Optional[str] = None,
+    dst_type: Optional[str] = None,
+    term_type: Optional[str] = None,
+) -> pd.DataFrame:
+    """Filters the rows of a composition df by a set of conditions."""
+    if src_layer is not None:
+        subdf = df[df.src_layer == src_layer]
+
+    if dst_layer is not None:
+        subdf = df[df.dst_layer == dst_layer]
+
+    if src_type is not None:
+        subdf = df[df.src_type == src_type]
+
+    if dst_type is not None:
+        subdf = df[df.dst_type == dst_type]
+
+    if term_type is not None:
+        subdf = df[df.term_type == term_type]
+
+    return subdf
+
+
+def plot_all_head_input_dists(
+    df: pd.DataFrame,
+    src_type: Optional[str] = None,
+    src_layer: Optional[int] = None,
+    term_type: Optional[str] = None,
+    logy: Optional[bool] = True,
+) -> plt.Figure:
+    """Plot the input term_value distribution for every head within a dataframe."""
+    xlim = (0, 1)
+    bins = np.linspace(0, 1, 21)
+
+    df = filterdf(df, src_type=src_type, src_layer=src_layer, term_type=term_type)
+
+    layers = sorted(pd.unique(df.dst_layer).tolist())
+    layers = list(filter(lambda x: x != 0, layers))  # removing layer 0
+
+    heads = sorted(pd.unique(df.dst_index).tolist())
+
+    num_layers = len(layers)
+    num_heads = len(heads)
+
+    for layer in layers:
+        for head in heads:
+            plt.subplot(
+                num_layers, num_heads, num_heads * (layer - 1) + head + 1
+            )
+
+            plt.title(f"head: {head} layer: {layer}")
+            subdf = df[
+                (df.dst_type == "att_head")
+                & (df.dst_index == head)
+                & (df.dst_layer == layer)
+            ]
+
+            plt.hist(subdf.term_value, color="k", bins=bins)
+            plt.xlim(*xlim)
+
+            if logy:
+                plt.yscale("log")
+
+    plt.tight_layout()
+
+    
 def logspace_bins(
     data: np.ndarray, numbins: int = 30, eps: float = 1e-10
 ) -> np.ndarray:
