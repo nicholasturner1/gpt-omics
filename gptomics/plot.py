@@ -10,6 +10,15 @@ DEFAULT_FONTSIZE = 20
 COLORS = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
 
+def logspace_bins(
+    data: np.ndarray, numbins: int = 30, eps: float = 1e-10
+) -> np.ndarray:
+    datamin = np.log(data.min())
+    datamax = np.log(data.max())
+
+    return np.exp(np.linspace(datamin-eps, datamax+eps, numbins))
+
+
 def percentiles_by_type(
     df: pd.DataFrame,
     type_colname: str,
