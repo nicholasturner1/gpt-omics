@@ -56,9 +56,26 @@ def basecomposition(
     if not wikidenom:
         denominator = frobnorm(dst_M) * frobnorm(src_M)
     else:
-        denominator = np.linalg.norm(singularvals(dst_M) * singularvals(src_M))
+        d1 = singularvals(dst_M)
+        d2 = singularvals(src_M)
+
+        if len(d1) > len(d2):
+            d2 = zeropad(d2, len(d1))
+        elif len(d2) > len(d1):
+            d1 = zeropad(d1, len(d2))
+
+        denominator = np.linalg.norm(d1 * d2)
 
     return numerator / denominator
+
+
+def zeropad(v: np.ndarray, newlen: int):
+    assert len(v) <= newlen, f"cannot zeropad to a smaller length {len(v)}->{newlen}"
+
+    newv = np.zeros((newlen,), dtype=v.dtype)
+    newv[:len(v)] = v[:]
+
+    return newv
 
 
 def composition_singularvals(
