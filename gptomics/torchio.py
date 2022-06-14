@@ -13,7 +13,7 @@ import torch
 from torch import serialization as ser
 
 
-def read_tensor_metadata(filename: str) -> list[str]:
+def read_tensor_metadata(filename: str) -> dict[str, tuple]:
     """Reads the metadata in pytorch_model.bin."""
     ser._check_dill_version(pickle)
     with ser._open_file_like(filename, "rb") as f:
@@ -39,7 +39,7 @@ def read_tensor_names(filename: str) -> list[str]:
             return list(tensor_meta.keys())
 
 
-def read_tensors(filename: str, tensor_names: list[str]) -> dict[str, torch.tensor]:
+def read_tensors(filename: str, tensor_names: list[str]) -> dict[str, torch.Tensor]:
     """Reads a named set of tensors from pytorch_model.bin."""
     ser._check_dill_version(pickle)
     with ser._open_file_like(filename, "rb") as f:
@@ -53,14 +53,14 @@ def read_tensors(filename: str, tensor_names: list[str]) -> dict[str, torch.tens
             return _read_tensors(zf, tensor_meta, tensor_names)
 
 
-def read_tensor(filename: str, tensor_name: str) -> torch.tensor:
+def read_tensor(filename: str, tensor_name: str) -> torch.Tensor:
     """Reads a single tensor from pytorch_model.bin."""
     return read_tensors(filename, [tensor_name])[tensor_name]
 
 
 def _read_tensor_metadata(zf) -> dict[str, tuple]:
     """Reads the stored metadata about each tensor within the zipfile."""
-    loaded_keys = dict()
+    loaded_keys: dict[str, int] = dict()
     metadata = list()
 
     # overrides an Unpickler method, just returning the tensor metadata
@@ -86,7 +86,7 @@ def _read_tensor_metadata(zf) -> dict[str, tuple]:
     with _monkey_patched_rebuild_tensor():
         # unpickling the data file
         unpickler = UnpicklerWrapper(data_file)
-        unpickler.persistent_load = _persistent_load
+        unpickler.persistent_load = _persistent_load  # type: ignore[assignment]
         tensor_temp_id_lookup = unpickler.load()
 
     filled_metadata = dict()
@@ -116,7 +116,7 @@ def _read_tensor_metadata(zf) -> dict[str, tuple]:
 
 def _read_tensors(
     zf, metadata: dict[str, tuple], tensor_names: list[str]
-) -> dict[str, torch.tensor]:
+) -> dict[str, torch.Tensor]:
     """Reads the desired tensors from the zipfile."""
     assert all(name in metadata for name in tensor_names)
 
@@ -136,7 +136,7 @@ def _read_tensors(
 
 
 def monkeypatch_rebuild_tensor(key, storage_offset, size, stride):
-    return torch.tensor(
+    return torch.Tensor(
         # separating variable-length fields with -1s
         [key, storage_offset, *size, -1, *stride],
         dtype=torch.int,

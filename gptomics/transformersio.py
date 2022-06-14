@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import GPTNeoForCausalLM, AutoModelForCausalLM
 
 
 # A helper function to load models more quickly. Taken from Eleuther discord (#gpt-j)
@@ -23,7 +23,7 @@ def no_init(loading_code):
     return result
 
 
-def load_model(modelname: str) -> AutoModelForCausalLM:
+def load_model(modelname: str) -> GPTNeoForCausalLM:
     def load():
         return AutoModelForCausalLM.from_pretrained(modelname, low_cpu_mem_usage=True)
 

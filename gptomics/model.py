@@ -87,7 +87,7 @@ class Model:
             return base
 
     def sends_input_to(
-        self: Model, src_type: str, src_layer: int, dst_type: str, dst_layer: int
+        self, src_type: str, src_layer: int, dst_type: str, dst_layer: int
     ) -> bool:
         """Exposes input/output relationships of a model's architecture."""
         raise NotImplementedError
@@ -161,15 +161,15 @@ class GPTNeo_HF(Model):
         )
 
     @property
-    def num_layers(self: Model) -> int:
+    def num_layers(self) -> int:
         return self.model.config.num_layers
 
     @property
-    def num_heads(self: Model) -> int:
+    def num_heads(self) -> int:
         return self.model.config.num_heads
 
     def sends_input_to(
-        self: Model, src_type: str, src_layer: int, dst_type: str, dst_layer: int
+        self, src_type: str, src_layer: int, dst_type: str, dst_layer: int
     ) -> bool:
         if src_layer > dst_layer:
             return False
@@ -179,8 +179,11 @@ class GPTNeo_HF(Model):
             if dst_type == "att_head":
                 return False
 
-            if dst_type == "mlp_weight":
+            elif dst_type == "mlp_weight":
                 return src_type in ["layernorm_bias1", "att_head"]
+
+            else:
+                raise ValueError(f"unknown dst_type: {dst_type}")
 
         else:  # src_layer < dst_layer
             return True
@@ -206,7 +209,7 @@ class CachedFileModel(Model):
 
         return tensor.data.numpy()
 
-    def read_config(self: CachedFileModel, filename: str) -> SimpleNamespace:
+    def read_config(self, filename: str) -> SimpleNamespace:
         """Reads a config json file."""
         cfg = SimpleNamespace()
 
@@ -259,7 +262,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, O, V)
 
     @lru_cache(maxsize=CACHESIZE)
-    def Obias(self, layer: int, factored: bool = True) -> None:
+    def Obias(self, layer: int, factored: bool = True):  # type: ignore[override]
         return None
 
     @lru_cache(maxsize=CACHESIZE)
@@ -295,7 +298,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def layernorm_biases(
+    def layernorm_biases(  # type: ignore[override]
         self, layer: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
@@ -306,15 +309,15 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, bias)
 
     @property
-    def num_layers(self: Model) -> int:
+    def num_layers(self) -> int:
         return self.config.n_layer
 
     @property
-    def num_heads(self: Model) -> int:
+    def num_heads(self) -> int:
         return self.config.n_head
 
     def sends_input_to(
-        self: Model, src_type: str, src_layer: int, dst_type: str, dst_layer: int
+        self, src_type: str, src_layer: int, dst_type: str, dst_layer: int
     ) -> bool:
         if src_layer > dst_layer:
             return False
@@ -402,9 +405,9 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def layernorm_biases(
+    def layernorm_biases(  # type: ignore[override]
         self, layer: int, factored: bool = True
-    ) -> Union[SVD, np.ndarray]:
+    ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
         assert layer < self.num_layers, f"layer #{layer} does not exist"
 
         biases = (
@@ -418,11 +421,11 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         )
 
     @property
-    def num_layers(self: Model) -> int:
+    def num_layers(self) -> int:
         return self.config.num_layers
 
     @property
-    def num_heads(self: Model) -> int:
+    def num_heads(self) -> int:
         return self.config.num_heads
 
 

@@ -1,0 +1,40 @@
+fail_fast: true
+
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v3.2.0
+    hooks:
+    -   id: check-ast
+    -   id: check-merge-conflict
+    -   id: check-toml
+    -   id: detect-aws-credentials
+    -   id: detect-private-key
+    -   id: end-of-file-fixer
+
+-   repo: local
+    hooks:
+    -   id: black
+        name: black
+        entry: black
+        language: system
+        types: [python]
+
+-   repo: local
+    hooks:
+    -   id: flake8
+        name: flake8
+        entry: flake8
+        language: system
+        types: [python]
+
+# Cutting this hook until we start polishing the repo
+#- repo: local
+#  hooks:
+#  - id: mypy
+#    name: mypy
+#    entry: mypy
+#    language: system
+#    types: [python]
+#    args:
+#    -   "--ignore-missing-imports"
+#    -   "--show-error-codes"

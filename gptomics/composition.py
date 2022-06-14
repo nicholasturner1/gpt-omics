@@ -1,6 +1,8 @@
 """Computing [QKV] contribution/composition terms."""
 from __future__ import annotations
 
+from typing import Union
+
 import numpy as np
 
 from .svd import SVD
@@ -26,9 +28,12 @@ def singularvals(M: Union[np.ndarray, SVD]) -> np.ndarray:
         raise ValueError(f"unexpected type {type(M)}")
 
 
-def removemean(M: np.ndarray, method="direct") -> np.ndarray:
+def removemean(M: Union[np.ndarray, SVD], method="direct") -> Union[np.ndarray, SVD]:
     """Removes the mean from each column of a given matrix/vector."""
     if method == "direct":
+        assert isinstance(
+            M, np.ndarray
+        ), "direct method only implemented for np.ndarray"
         return M - M.mean(0)
 
     # less direct, more fun, works with svd.SVD objects
@@ -45,7 +50,10 @@ def removemean(M: np.ndarray, method="direct") -> np.ndarray:
 
 
 def basecomposition(
-    dst_M: np.ndarray, src_M: np.ndarray, center: bool = True, wikidenom: bool = False,
+    dst_M: Union[np.ndarray, SVD],
+    src_M: Union[np.ndarray, SVD],
+    center: bool = True,
+    wikidenom: bool = False,
 ) -> np.float32:
     """Computes composition assuming that the matrices are properly transposed."""
     if center:
@@ -73,14 +81,14 @@ def zeropad(v: np.ndarray, newlen: int):
     assert len(v) <= newlen, f"cannot zeropad to a smaller length {len(v)}->{newlen}"
 
     newv = np.zeros((newlen,), dtype=v.dtype)
-    newv[:len(v)] = v[:]
+    newv[: len(v)] = v[:]
 
     return newv
 
 
 def composition_singularvals(
-    dst_M: np.ndarray,
-    src_M: np.ndarray,
+    dst_M: Union[np.ndarray, SVD],
+    src_M: Union[np.ndarray, SVD],
     center: bool = True,
     normalize: bool = True,
     wikidenom: bool = False,
@@ -92,7 +100,7 @@ def composition_singularvals(
     values = singularvals(dst_M @ src_M)
 
     if normalize and not wikidenom:
-        values /= (frobnorm(dst_M) * frobnorm(src_M))
+        values /= frobnorm(dst_M) * frobnorm(src_M)
     elif normalize:
         values /= np.linalg.norm(singularvals(dst_M) * singularvals(src_M))
 

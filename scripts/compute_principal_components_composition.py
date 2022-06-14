@@ -1,14 +1,13 @@
-"""Computes the proportion of each composition term that's dominated by an amount of it's singular values across a model.
+"""Computes the variance explained by 1 SV in each composition term.
 
 Writes a pandas csv as output where each row specifies a single composition term.
 """
 import time
 import argparse
 
-import numpy as np
-
 from gptomics import model, pairengine
 from gptomics.svd import SVD
+
 
 def main(
     modelname: str,
@@ -34,11 +33,11 @@ def main(
 
     writeterms(df, outputfilename)
 
-    
+
 def principal_component(dst_M: SVD, src_M: SVD):
 
     sigmas = (dst_M @ src_M).S
-    return sigmas[0]**2/sum([sigma**2 for sigma in sigmas])
+    return sigmas[0] ** 2 / sum([sigma ** 2 for sigma in sigmas])
     """
     TODO: use the stacked graphs that nick made in order to visualize
     sigmas vs composition value with x axis as composition value

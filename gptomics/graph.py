@@ -208,7 +208,7 @@ def ipc_percentiles(
         return np.percentile(cs, percs)
 
     if isinstance(gs, gt.Graph):
-        return np.array([compute_complexities(g)])
+        return np.array([compute_percentiles(gs)])
 
     ipc_percs = list()
     for g in gs:
@@ -217,16 +217,15 @@ def ipc_percentiles(
     return np.array(ipc_percs)
 
 
-# inspired by https://stackoverflow.com/questions/20262712/enumerating-all-paths-in-a-directed-acyclic-graph
+# inspired by https://stackoverflow.com/questions/20262712/enumerating-all-paths-in-a-directed-acyclic-graph  # noqa
 def all_paths(g: gt.Graph, verbose: bool = True) -> list[list[int]]:
     """Finds ALL paths in a DAG.
 
     Often too slow to run on large models.
     """
+
     def dfs(
-        g: gt.Graph,
-        currpath: list[list[int]],
-        branchpaths: list[list[int]]
+        g: gt.Graph, currpath: list[list[int]], branchpaths: list[list[int]]
     ) -> list[list[int]]:
         v = currpath[-1]
 
@@ -260,7 +259,7 @@ def random_removal(g: gt.Graph) -> Generator[gt.Graph, None, None]:
 
     edges_per_percentile = int(np.ceil(len(perm) / 100))
     for i in range(100):
-        inds = perm[i * edges_per_percentile: (i + 1) * edges_per_percentile]
+        inds = perm[i * edges_per_percentile : (i + 1) * edges_per_percentile]
         mask[inds] = False
         filter_edges_by_arr(g, mask)
 

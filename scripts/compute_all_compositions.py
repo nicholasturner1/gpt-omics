@@ -6,10 +6,7 @@ import time
 import argparse
 from functools import partial
 
-import numpy as np
-
 from gptomics import model, pairengine, composition as comp
-from gptomics.svd import SVD
 
 
 def main(
@@ -31,7 +28,13 @@ def main(
     f = partial(comp.basecomposition, center=False, wikidenom=wikidenom)
 
     df = pairengine.compute_pair_terms(
-        m, f, Obiases=Obiases, MLPs=MLPs, LNs=LNs, verbose=verbose, reverse=reverse,
+        m,
+        f,
+        Obiases=Obiases,
+        MLPs=MLPs,
+        LNs=LNs,
+        verbose=verbose,
+        reverse=reverse,
     )
 
     if verbose:
