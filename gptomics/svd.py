@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Union
 
+import torch
 import numpy as np
 
 
@@ -24,7 +25,7 @@ class SVD:
         return SVD(self.U @ Up, Sp, Vtp @ other.Vt)
 
     @classmethod
-    def frommatrix(cls, M: np.ndarray) -> SVD:
+    def frommatrix(cls, M: np.ndarray, gpu: bool = False) -> SVD:
         if len(M.shape) == 1:
             norm = np.linalg.norm(M)
             return SVD(
@@ -33,12 +34,17 @@ class SVD:
                 np.array([1], dtype=M.dtype).reshape(1, 1),
             )
 
-        U, S, Vt = np.linalg.svd(M, full_matrices=False)
+        if not gpu:
+            U, S, Vt = np.linalg.svd(M, full_matrices=False)
+        else:
+            U, S, Vt = torch.linalg.svd(torch.tensor(M).to("cuda"), full_matrices=False)
+            U, S, Vt = U.cpu().numpy(), S.cpu().numpy(), Vt.cpu().numpy()
+
         return SVD(U, S, Vt)
 
     @classmethod
-    def frommatrices(cls, *Ms: np.ndarray) -> SVD:
-        svds = [SVD.frommatrix(M) for M in Ms]
+    def frommatrices(cls, *Ms: np.ndarray, gpu: bool = False) -> SVD:
+        svds = [SVD.frommatrix(M, gpu=gpu) for M in Ms]
 
         if len(svds) == 1:
             return svds[0]
