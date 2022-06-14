@@ -112,7 +112,10 @@ def layernorm_biases(
 
 
 def attentionweights(
-    inputs: np.ndarray, model: GPTNeoForCausalLM, layer: int, head: int,
+    inputs: np.ndarray,
+    model: GPTNeoForCausalLM,
+    layer: int,
+    head: int,
 ) -> np.ndarray:
     """Computes attention weights for set of inputs to a single attention head."""
     assert len(inputs.shape) == 2
@@ -131,7 +134,10 @@ def attentionweights(
 
 
 def selfattention(
-    inputs: np.ndarray, model: GPTNeoForCausalLM, layer: int, head: int,
+    inputs: np.ndarray,
+    model: GPTNeoForCausalLM,
+    layer: int,
+    head: int,
 ) -> np.ndarray:
     """Computes the self-attention output for a set of inputs to a single head."""
     assert len(inputs.shape) == 2

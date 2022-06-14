@@ -1,4 +1,3 @@
-
 """Computes all of the singular values for the QKV composition matrices across a model.
 
 Writes a pandas csv as output where each row specifies a single composition term.
@@ -6,11 +5,11 @@ Writes a pandas csv as output where each row specifies a single composition term
 import time
 import argparse
 
-import numpy as np
-
 from gptomics import model, pairengine
 from gptomics.svd import SVD
+
 colnames = pairengine.STDCOLNAMES + ["SV_index"]
+
 
 def main(
     modelname: str,
@@ -27,7 +26,13 @@ def main(
         begin = time.time()
 
     df = pairengine.compute_pair_terms(
-        m, singular_values, colnames=colnames, Obiases=Obiases, MLPs=MLPs, LNs=LNs, verbose=verbose
+        m,
+        singular_values,
+        colnames=colnames,
+        Obiases=Obiases,
+        MLPs=MLPs,
+        LNs=LNs,
+        verbose=verbose,
     )
 
     if verbose:

@@ -1,16 +1,18 @@
 """Representing matrix multiplications as SVD factorizations."""
 from __future__ import annotations
 
+from typing import Union
+
 import numpy as np
 
 
 class SVD:
-    def __init__(self: SVD, U: np.ndarray, S: np.ndarray, Vt: np.ndarray):
+    def __init__(self, U: np.ndarray, S: np.ndarray, Vt: np.ndarray):
         self.U = U
         self.S = S
         self.Vt = Vt
 
-    def __matmul__(self: SVD, other: Union[SVD, np.ndarray]) -> SVD:
+    def __matmul__(self, other: Union[SVD, np.ndarray]) -> SVD:
         if isinstance(other, np.ndarray):
             other = SVD.frommatrix(other)
 
@@ -22,7 +24,7 @@ class SVD:
         return SVD(self.U @ Up, Sp, Vtp @ other.Vt)
 
     @classmethod
-    def frommatrix(cls: SVD, M: np.ndarray) -> SVD:
+    def frommatrix(cls, M: np.ndarray) -> SVD:
         if len(M.shape) == 1:
             norm = np.linalg.norm(M)
             return SVD(
@@ -35,7 +37,7 @@ class SVD:
         return SVD(U, S, Vt)
 
     @classmethod
-    def frommatrices(cls: SVD, *Ms: list[np.ndarray]) -> SVD:
+    def frommatrices(cls, *Ms: np.ndarray) -> SVD:
         svds = [SVD.frommatrix(M) for M in Ms]
 
         if len(svds) == 1:
@@ -49,19 +51,19 @@ class SVD:
             return base
 
     @property
-    def T(self: SVD) -> SVD:
+    def T(self) -> SVD:
         return SVD(self.Vt.T, self.S, self.U.T)
 
-    def full(self: SVD) -> np.ndarray:
+    def full(self) -> np.ndarray:
         return (self.U * self.S) @ self.Vt
 
-    def __repr__(self: SVD) -> str:
+    def __repr__(self) -> str:
         return f"SVD <U: {self.U.shape}, S: {self.S.shape}, Vt: {self.Vt.shape}>"
 
     @property
-    def shape(self: SVD) -> tuple[int]:
+    def shape(self) -> tuple[int, int]:
         return (self.U.shape[0], self.Vt.shape[1])
 
     @property
-    def dtype(self: SVD) -> type:
+    def dtype(self) -> type:
         return self.U.dtype

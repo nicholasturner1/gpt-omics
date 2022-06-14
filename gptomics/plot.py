@@ -60,9 +60,7 @@ def plot_all_head_input_dists(
 
     for layer in layers:
         for head in heads:
-            plt.subplot(
-                num_layers, num_heads, num_heads * (layer - 1) + head + 1
-            )
+            plt.subplot(num_layers, num_heads, num_heads * (layer - 1) + head + 1)
 
             plt.title(f"head: {head} layer: {layer}")
             subdf = df[
@@ -79,25 +77,25 @@ def plot_all_head_input_dists(
 
     plt.tight_layout()
 
-    
+
 def logspace_bins(
     data: np.ndarray, numbins: int = 30, eps: float = 1e-10
 ) -> np.ndarray:
     datamin = np.log(data.min())
     datamax = np.log(data.max())
 
-    return np.exp(np.linspace(datamin-eps, datamax+eps, numbins))
+    return np.exp(np.linspace(datamin - eps, datamax + eps, numbins))
 
 
 def percentiles_by_type(
     df: pd.DataFrame,
     type_colname: str,
     types: Optional[list[str]] = None,
-    nbins: Optional[int] = 20,
+    nbins: int = 20,
     ax: Optional[plt.Axes] = None,
-    fontsize: Optional[int] = DEFAULT_FONTSIZE,
-    colors: Optional[list] = COLORS,
-    legend: Optional[bool] = True,
+    fontsize: int = DEFAULT_FONTSIZE,
+    colors: list = COLORS,
+    legend: bool = True,
 ) -> plt.Axes:
     """Bar plot with a type breakdown for percentile groups.
 
@@ -121,8 +119,7 @@ def percentiles_by_type(
     plotdf["bin"] = compute_percentile_bins(df, nbins=nbins)
 
     grouped = (
-        plotdf.groupby(["bin", type_colname]).count()
-        / (plotdf.shape[0] / nbins)
+        plotdf.groupby(["bin", type_colname]).count() / (plotdf.shape[0] / nbins)
     ).reset_index()
 
     y_ = np.zeros((nbins,), dtype=np.float32)
@@ -133,6 +130,8 @@ def percentiles_by_type(
             x=subdf.index,
             height=subdf["term_value"],
             bottom=y_[subdf.index - 1],
+            width=1,
+            edgecolor="k",
             label=t,
             color=c,
         )
@@ -141,7 +140,9 @@ def percentiles_by_type(
     perc_interval = 100 / nbins
     ax.set_xticks(
         np.arange(nbins) + 1,
-        labels=[f"{i*perc_interval:.0f}p-{(i+1)*perc_interval:.0f}p" for i in range(nbins)],
+        labels=[
+            f"{i*perc_interval:.0f}p-{(i+1)*perc_interval:.0f}p" for i in range(nbins)
+        ],
         rotation=45,
     )
     ax.set_xlabel("Value percentile", fontsize=fontsize)
@@ -184,7 +185,7 @@ def plot_layerdists(
     color="k",
     ax: plt.Axes = None,
     fontsize: int = DEFAULT_FONTSIZE,
-    **kwargs
+    **kwargs,
 ) -> plt.Axes:
     """Plots the distribution of layer distance between edges in a DataFrame.
 
@@ -215,7 +216,7 @@ def plot_grp_layerdist_hist(
     df: pd.DataFrame,
     grp: int = 20,
     grp_colname: str = "overall_5p_grp",
-    color='k',
+    color="k",
     ax: plt.Axes = None,
     fontsize: int = DEFAULT_FONTSIZE,
 ) -> plt.Axes:
@@ -244,7 +245,7 @@ def plot_ipc_percentiles(
     color="k",
     ax: plt.Axes = None,
     fontsize: int = DEFAULT_FONTSIZE,
-    **kwargs
+    **kwargs,
 ) -> plt.Axes:
     """Plots the input path complexities over percentile threshold values.
 
@@ -276,6 +277,6 @@ def plot_ipc_percentiles(
     )
 
     ax.set_xlabel("Percentile threshold", fontsize=fontsize)
-    ax.set_ylabel("Input path complexity", fontsize=fontsize)
+    ax.set_ylabel("IPC", fontsize=fontsize)
 
     return ax

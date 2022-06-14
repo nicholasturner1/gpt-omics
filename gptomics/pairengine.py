@@ -10,8 +10,11 @@ import numpy as np
 import pandas as pd
 
 from .model import Model, GPTJ
+from .svd import SVD
 from gptomics import composition as comp
 
+
+ParamMatrix = Union[np.ndarray, SVD]
 
 STDCOLNAMES = [
     "src_type",
@@ -49,7 +52,7 @@ def compute_pair_terms(
     terms = list()
     layers = range(0, model.num_layers)
     if reverse:
-        layers = reversed(layers)
+        layers = reversed(layers)  # type: ignore[assignment]
 
     for layer in layers:
         terms.append(
@@ -145,7 +148,7 @@ def layer_output_terms(
     if not reverse:
         dst_layers = range(src_layer, model.num_layers)
     else:
-        dst_layers = reversed(range(0, src_layer + 1))
+        dst_layers = reversed(range(0, src_layer + 1))  # type: ignore[assignment]
 
     for dst_layer in dst_layers:
         if verbose:
@@ -201,11 +204,11 @@ def layer_input_terms(
     dst_layer: int,
     f: Callable,
     computeMLPterms: bool = False,
-    OVs: Optional[list[np.ndarray]] = None,
-    Obias: Optional[np.ndarray] = None,
-    MLPout: Optional[np.ndarray] = None,
-    MLPbias: Optional[np.ndarray] = None,
-    ln_biases: Optional[Union[tuple[np.ndarray, np.ndarray], np.ndarray]] = None,
+    OVs: Optional[list[ParamMatrix]] = None,
+    Obias: Optional[ParamMatrix] = None,
+    MLPout: Optional[ParamMatrix] = None,
+    MLPbias: Optional[ParamMatrix] = None,
+    ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
     reverse: bool = False,
 ) -> list[list]:
     """Computes f across all inputs of a given layer.
@@ -245,7 +248,16 @@ def layer_input_terms(
     if takes_any_input("att_head"):
         rows.extend(
             att_head_input_terms(
-                model, src_layer, dst_layer, f, OVs, Obias, MLPout, MLPbias, ln_biases, reverse
+                model,
+                src_layer,
+                dst_layer,
+                f,
+                OVs,
+                Obias,
+                MLPout,
+                MLPbias,
+                ln_biases,
+                reverse,
             )
         )
 
@@ -260,7 +272,16 @@ def layer_input_terms(
     if computeMLPterms and takes_any_input("mlp_weight"):
         rows.extend(
             mlp_input_terms(
-                model, src_layer, dst_layer, f, OVs, Obias, MLPout, MLPbias, ln_biases, reverse
+                model,
+                src_layer,
+                dst_layer,
+                f,
+                OVs,
+                Obias,
+                MLPout,
+                MLPbias,
+                ln_biases,
+                reverse,
             )
         )
 
@@ -272,11 +293,11 @@ def mlp_input_terms(
     src_layer: int,
     dst_layer: int,
     f: Callable,
-    OVs: list[np.ndarray],
-    Obias: Optional[np.ndarray] = None,
-    MLPout: Optional[np.ndarray] = None,
-    MLPbias: Optional[np.ndarray] = None,
-    ln_biases: Optional[Union[tuple[np.ndarray, np.ndarray], np.ndarray]] = None,
+    OVs: list[ParamMatrix],
+    Obias: Optional[ParamMatrix] = None,
+    MLPout: Optional[ParamMatrix] = None,
+    MLPbias: Optional[ParamMatrix] = None,
+    ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
     reverse: bool = False,
 ) -> list[list]:
     """"""
@@ -295,7 +316,9 @@ def mlp_input_terms(
             return model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
 
     def compute_term(
-        src_M: np.ndarray, src_type: str, src_index: int = 0,
+        src_M: ParamMatrix,
+        src_type: str,
+        src_index: int = 0,
     ):
         value = f(MLPin, src_M)
         return make_rows(
@@ -343,11 +366,11 @@ def att_head_input_terms(
     src_layer: int,
     dst_layer: int,
     f: Callable,
-    src_OVs: list[np.ndarray],
-    Obias: Optional[np.ndarray] = None,
-    MLPout: Optional[np.ndarray] = None,
-    MLPbias: Optional[np.ndarray] = None,
-    ln_biases: Optional[Union[tuple[np.ndarray, np.ndarray], np.ndarray]] = None,
+    src_OVs: list[ParamMatrix],
+    Obias: Optional[ParamMatrix] = None,
+    MLPout: Optional[ParamMatrix] = None,
+    MLPbias: Optional[ParamMatrix] = None,
+    ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
     reverse: bool = False,
 ) -> list[list]:
     """"""
@@ -384,7 +407,9 @@ def att_head_input_terms(
         )
 
     def compute_terms(
-        src_M: np.ndarray, src_type: str, src_index: int = 0,
+        src_M: ParamMatrix,
+        src_type: str,
+        src_index: int = 0,
     ):
         """Computes terms for a given input matrix."""
         Qterms = [f(QK.T, src_M) for QK in QKs]
