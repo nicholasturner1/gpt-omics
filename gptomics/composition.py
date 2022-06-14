@@ -1,11 +1,16 @@
 """Computing [QKV] contribution/composition terms."""
 from __future__ import annotations
 
-from typing import Union
+from typing import Union, Optional
 
+import torch
 import numpy as np
+from tqdm import tqdm
 
 from .svd import SVD
+
+
+ParamMatrix = Union[np.ndarray, SVD]
 
 
 def frobnorm(M: Union[np.ndarray, SVD]) -> np.float32:
@@ -133,3 +138,42 @@ def MLP_in_contribution(
 ) -> np.float32:
     """Computes contribution to the MLP hidden layer."""
     return basecomposition(dst_MLPin, src_OV, center=center)
+
+
+def init_baseline_dist(
+    weight: ParamMatrix,
+    dest_shape: tuple[int, int],
+    num_samples: int = 100,
+    init_weight: bool = False,
+    wikidenom: bool = True,
+    sample_rank: Optional[int] = None,
+) -> np.ndarray:
+    """Baseline composition terms from randomly-initialized weight matrices."""
+
+    # xavier uniform by default to match unseal
+    alpha = np.sqrt(6 / (weight.shape[0] + weight.shape[1]))
+    dist = torch.distributions.Uniform(-alpha, alpha)
+
+    if init_weight:
+        if sample_rank is None:
+            weight = dist.rsample(weight.shape).numpy()
+        else:
+            weight1 = dist.rsample((weight.shape[0], sample_rank)).numpy()
+            weight2 = dist.rsample((sample_rank, weight.shape[1])).numpy()
+
+            weight = weight1 @ weight2
+
+    terms = np.empty((num_samples,), dtype=np.float32)
+    for i in tqdm(range(num_samples)):
+
+        # sampling a random matrix
+        if sample_rank is None:
+            newmat = dist.rsample(dest_shape).numpy()
+        else:
+            newmat1 = dist.rsample((dest_shape[0], sample_rank)).numpy()
+            newmat2 = dist.rsample((sample_rank, dest_shape[1])).numpy()
+            newmat = newmat1 @ newmat2
+
+        terms[i] = basecomposition(weight, newmat, center=False, wikidenom=wikidenom)
+
+    return terms
