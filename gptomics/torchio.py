@@ -136,7 +136,7 @@ def _read_tensors(
 
 
 def monkeypatch_rebuild_tensor(key, storage_offset, size, stride):
-    return torch.Tensor(
+    return torch.tensor(
         # separating variable-length fields with -1s
         [key, storage_offset, *size, -1, *stride],
         dtype=torch.int,
