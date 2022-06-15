@@ -23,8 +23,8 @@ CACHESIZE = 16
 class Model:
     """Model virtual class."""
 
-    def __init__(self):
-        pass
+    def __init__(self, gpu_svd: bool = False):
+        self.gpu_svd = gpu_svd
 
     def qk(
         self, layer: int, head: int, factored: bool = False
@@ -79,7 +79,7 @@ class Model:
     ) -> Union[SVD, np.ndarray]:
         """Factors the matrix using an SVD if desired."""
         if factor:
-            return SVD.frommatrices(*Ms)
+            return SVD.frommatrices(*Ms, gpu=self.gpu_svd)
         else:
             base = Ms[0]
 
@@ -98,9 +98,10 @@ class Model:
 class GPTNeo_HF(Model):
     """GPT-Neo through HuggingFace transformers."""
 
-    def __init__(self, modelname: str):
+    def __init__(self, modelname: str, gpu_svd: bool = False):
         super().__init__()
         self.model = transformersio.load_model(modelname)
+        self.gpu_svd = gpu_svd
 
     def qk(
         self, layer: int, head: int, factored: bool = False
@@ -200,10 +201,13 @@ class CachedFileModel(Model):
     the number of disk accesses.
     """
 
-    def __init__(self, config_filename: str, param_filename: str):
+    def __init__(
+        self, config_filename: str, param_filename: str, gpu_svd: bool = False
+    ):
         self.config = self.read_config(config_filename)
         self.param_filename = param_filename
         self.tensor_names = torchio.read_tensor_names(param_filename)
+        self.gpu_svd = gpu_svd
 
     @lru_cache(maxsize=50)
     def fetch_tensor(self, tensorname: str) -> np.ndarray:
@@ -435,10 +439,10 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.config.num_heads
 
 
-def model_by_name(modelname: str):
+def model_by_name(modelname: str, gpu_svd: bool = False):
     """Instantiate Models by simplified names using a default implementation."""
     known_names = ["EleutherAI/gpt-neo-125M"]
     assert modelname in known_names, f"unknown model name: {modelname}"
 
     if modelname == "EleutherAI/gpt-neo-125M":
-        return GPTNeo_HF("EleutherAI/gpt-neo-125M")
+        return GPTNeo_HF("EleutherAI/gpt-neo-125M", gpu_svd=gpu_svd)
