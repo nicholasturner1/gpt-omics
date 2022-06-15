@@ -10,7 +10,7 @@ import numpy as np
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoForCausalLM
 
 
-def QK(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
+def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     """Extracts the QK matrix from a given head & layer from the model."""
     config = model.config
     head_dim = config.hidden_size // config.num_heads
@@ -28,7 +28,7 @@ def QK(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     return Qh.T @ Kh
 
 
-def OV(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
+def ov(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     """Extracts the OV matrix from a given head & layer from the model."""
     config = model.config
     head_dim = config.hidden_size // config.num_heads
@@ -46,13 +46,7 @@ def OV(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     return Oh @ Vh
 
 
-# I used to call this function "OVsimple" to signal that we would later account
-# for the biases within the same matrix, but we later decided against this since
-# the bias can't be attributed to particular heads.
-OVsimple = OV
-
-
-def Obias(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def out_bias(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     """Extracts the output bias from a given layer of the model."""
     config = model.config
 
@@ -61,7 +55,7 @@ def Obias(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].attn.attention.out_proj.bias.data.numpy()
 
 
-def MLPin(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     """Extracts the input weights for an MLP layer."""
     config = model.config
 
@@ -70,7 +64,7 @@ def MLPin(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].mlp.c_fc.weight.data.numpy()
 
 
-def MLPout(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     """Extracts the output weights for an MLP layer."""
     config = model.config
 
@@ -79,7 +73,7 @@ def MLPout(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].mlp.c_proj.weight.data.numpy()
 
 
-def MLPbias_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_bias_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     """Extracts the bias for the input weights of an MLP layer."""
     config = model.config
 
@@ -88,7 +82,7 @@ def MLPbias_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].mlp.c_fc.bias.data.numpy()
 
 
-def MLPbias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_bias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     """Extracts the bias for the output weights of an MLP layer."""
     config = model.config
 
@@ -97,9 +91,7 @@ def MLPbias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].mlp.c_proj.bias.data.numpy()
 
 
-def layernorm_biases(
-    model: GPTNeoForCausalLM, layer: int
-) -> tuple[np.ndarray, np.ndarray]:
+def ln_biases(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
     """Extracts the layer norm biases from a given layer of the model."""
     config = model.config
 
@@ -123,7 +115,7 @@ def attentionweights(
     seqlen = inputs.shape[1]
     causal_mask = np.tril(np.ones((seqlen, seqlen), dtype=np.uint8))
 
-    raw = inputs.T @ QK(model, layer, head) @ inputs
+    raw = inputs.T @ qk(model, layer, head) @ inputs
     final = torch.nn.functional.softmax(
         # raw weights with causal mask
         torch.tensor(np.where(causal_mask == 1, raw, -1e9)),
@@ -142,6 +134,6 @@ def selfattention(
     """Computes the self-attention output for a set of inputs to a single head."""
     assert len(inputs.shape) == 2
 
-    OVmat = OV(model, layer, head)
+    OVmat = ov(model, layer, head)
 
     return OVmat @ inputs @ attentionweights(inputs, model, layer, head).T

@@ -18,8 +18,6 @@ repos:
         entry: black
         language: system
         types: [python]
-        args:
-        -   "--diff"
 
 -   repo: local
     hooks:

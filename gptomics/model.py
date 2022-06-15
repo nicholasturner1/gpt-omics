@@ -26,39 +26,41 @@ class Model:
     def __init__(self):
         pass
 
-    def QK(
+    def qk(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
         """Extracts the QK matrix from a model."""
         raise NotImplementedError
 
-    def OV(
+    def ov(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
         """Extracts the OV matrix from a model."""
         raise NotImplementedError
 
-    def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+    def out_bias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the output bias vector from a model (if it exists)."""
         raise NotImplementedError
 
-    def MLPin(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+    def mlp_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP input matrix from a model."""
         raise NotImplementedError
 
-    def MLPout(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+    def mlp_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP output matrix from a model."""
         raise NotImplementedError
 
-    def MLPbias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+    def mlp_bias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
         """Extracts the MLP input bias from a model."""
         raise NotImplementedError
 
-    def MLPbias_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+    def mlp_bias_out(
+        self, layer: int, factored: bool = False
+    ) -> Union[SVD, np.ndarray]:
         """Extracts the MLP output bias from a model."""
         raise NotImplementedError
 
-    def layernorm_biases(
+    def ln_biases(
         self, layer: int, factored: bool = False
     ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
         """Extracts the Layer norm biases from a model."""
@@ -100,7 +102,7 @@ class GPTNeo_HF(Model):
         super().__init__()
         self.model = transformersio.load_model(modelname)
 
-    def QK(
+    def qk(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
         config = self.model.config
@@ -118,7 +120,7 @@ class GPTNeo_HF(Model):
 
         return self.maybe_factor(factored, Qh.T, Kh)
 
-    def OV(
+    def ov(
         self, layer: int, head: int, factored: bool = False
     ) -> Union[SVD, np.ndarray]:
         config = self.model.config
@@ -136,25 +138,27 @@ class GPTNeo_HF(Model):
 
         return self.maybe_factor(factored, Oh, Vh)
 
-    def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.Obias(self.model, layer))
+    def out_bias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.out_bias(self.model, layer))
 
-    def MLPin(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.MLPin(self.model, layer))
+    def mlp_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.mlp_in(self.model, layer))
 
-    def MLPout(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.MLPout(self.model, layer))
+    def mlp_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.mlp_out(self.model, layer))
 
-    def MLPbias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.MLPbias_in(self.model, layer))
+    def mlp_bias_in(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.mlp_bias_in(self.model, layer))
 
-    def MLPbias_out(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
-        return self.maybe_factor(factored, gptneo.MLPbias_out(self.model, layer))
+    def mlp_bias_out(
+        self, layer: int, factored: bool = False
+    ) -> Union[SVD, np.ndarray]:
+        return self.maybe_factor(factored, gptneo.mlp_bias_out(self.model, layer))
 
-    def layernorm_biases(
+    def ln_biases(
         self, layer: int, factored: bool = False
     ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
-        biases = gptneo.layernorm_biases(self.model, layer)
+        biases = gptneo.ln_biases(self.model, layer)
         return (
             self.maybe_factor(factored, biases[0]),
             self.maybe_factor(factored, biases[1]),
@@ -226,7 +230,7 @@ class GPTJ(CachedFileModel):
     """A CachedFileModel for interacting with GPT-J."""
 
     @lru_cache(maxsize=CACHESIZE)
-    def QK(
+    def qk(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
         assert head < self.config.n_head, f"head #{head} does not exist"
@@ -244,7 +248,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, Q.T, K)
 
     @lru_cache(maxsize=CACHESIZE)
-    def OV(
+    def ov(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
         assert head < self.config.n_head, f"head #{head} does not exist"
@@ -262,11 +266,11 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, O, V)
 
     @lru_cache(maxsize=CACHESIZE)
-    def Obias(self, layer: int, factored: bool = True):  # type: ignore[override]
+    def out_bias(self, layer: int, factored: bool = True):  # type: ignore[override]
         return None
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPin(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.weight")
@@ -274,7 +278,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPout(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_out.weight")
@@ -282,7 +286,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPbias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_bias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.bias")
@@ -290,7 +294,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPbias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_bias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_out.bias")
@@ -298,7 +302,7 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def layernorm_biases(  # type: ignore[override]
+    def ln_biases(  # type: ignore[override]
         self, layer: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
         assert layer < self.config.n_layer, f"layer #{layer} does not exist"
@@ -333,7 +337,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
     """A CachedFileModel for interacting with GPT-Neo models."""
 
     @lru_cache(maxsize=CACHESIZE)
-    def QK(
+    def qk(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
         assert head < self.num_heads, f"head #{head} does not exist"
@@ -350,7 +354,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, Q.T, K)
 
     @lru_cache(maxsize=CACHESIZE)
-    def OV(
+    def ov(
         self, layer: int, head: int, factored: bool = True
     ) -> Union[SVD, np.ndarray]:
         assert head < self.num_heads, f"head #{head} does not exist"
@@ -367,13 +371,15 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, O, V)
 
     @lru_cache(maxsize=CACHESIZE)
-    def Obias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
-        Obias = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.out_proj.bias")
+    def out_bias(self, layer: int, factored: bool = False) -> Union[SVD, np.ndarray]:
+        out_bias = self.fetch_tensor(
+            f"transformer.h.{layer}.attn.attention.out_proj.bias"
+        )
 
-        return self.maybe_factor(factored, Obias)
+        return self.maybe_factor(factored, out_bias)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPin(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.num_layers, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_fc.weight")
@@ -381,7 +387,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPout(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.num_layers, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_proj.weight")
@@ -389,7 +395,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPbias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_bias_in(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.num_layers, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_fc.bias")
@@ -397,7 +403,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def MLPbias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
+    def mlp_bias_out(self, layer: int, factored: bool = True) -> Union[SVD, np.ndarray]:
         assert layer < self.num_layers, f"layer #{layer} does not exist"
 
         M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_proj.bias")
@@ -405,7 +411,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def layernorm_biases(  # type: ignore[override]
+    def ln_biases(  # type: ignore[override]
         self, layer: int, factored: bool = True
     ) -> tuple[Union[SVD, np.ndarray], Union[SVD, np.ndarray]]:
         assert layer < self.num_layers, f"layer #{layer} does not exist"

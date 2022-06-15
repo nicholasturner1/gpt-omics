@@ -36,9 +36,9 @@ def compute_pair_terms(
     model: Model,
     f: Callable,
     colnames: list[str] = STDCOLNAMES,
-    Obiases: bool = True,
-    MLPs: bool = True,
-    LNs: bool = True,
+    out_biases: bool = True,
+    mlps: bool = True,
+    lns: bool = True,
     verbose: int = 1,
     reverse: bool = False,
 ) -> pd.DataFrame:
@@ -57,7 +57,7 @@ def compute_pair_terms(
     for layer in layers:
         terms.append(
             layer_output_terms(
-                model, layer, f, colnames, Obiases, MLPs, LNs, verbose, reverse
+                model, layer, f, colnames, out_biases, mlps, lns, verbose, reverse
             )
         )
     if verbose:
@@ -71,9 +71,9 @@ def layer_output_terms(
     src_layer: int,
     f: Callable,
     colnames: list[str],
-    Obiases: bool = True,
-    MLPs: bool = True,
-    LNs: bool = True,
+    out_biases: bool = True,
+    mlps: bool = True,
+    lns: bool = True,
     verbose: int = 1,
     reverse: bool = False,
 ) -> pd.DataFrame:
@@ -95,40 +95,40 @@ def layer_output_terms(
         print("Extracting OVs")
     OVs = [
         comp.removemean(
-            model.OV(src_layer, head, factored=True), method="matrix multiply"
+            model.ov(src_layer, head, factored=True), method="matrix multiply"
         )
         for head in range(num_heads)
     ]
 
-    if Obiases:
+    if out_biases:
         if verbose > 1:
-            print("Extracting Obiases")
-        Obias = comp.removemean(
-            model.Obias(src_layer, factored=True), method="matrix multiply"
+            print("Extracting output biases")
+        out_bias = comp.removemean(
+            model.out_bias(src_layer, factored=True), method="matrix multiply"
         )
     else:
-        Obias = None
+        out_bias = None
 
-    if MLPs:
+    if mlps:
         if verbose > 1:
-            print("Extracting MLPs")
-        MLPout = comp.removemean(
-            model.MLPout(src_layer, factored=True), method="matrix multiply"
+            print("Extracting mlps")
+        mlp_out = comp.removemean(
+            model.mlp_out(src_layer, factored=True), method="matrix multiply"
         )
-        MLPbias = comp.removemean(
-            model.MLPbias_out(src_layer, factored=True), method="matrix multiply"
+        mlp_bias = comp.removemean(
+            model.mlp_bias_out(src_layer, factored=True), method="matrix multiply"
         )
     else:
-        MLPout, MLPbias = None, None
+        mlp_out, mlp_bias = None, None
 
     # Layer norm biases
     # NOTE: these may not pass through an LN before
     # being read by another layer, so they should only be
     # centered once they do.
-    if LNs:
+    if lns:
         if verbose > 1:
-            print("Extracting LNs")
-        ln_biases = model.layernorm_biases(src_layer, factored=True)
+            print("Extracting lns")
+        ln_biases = model.ln_biases(src_layer, factored=True)
         if not isGPTJ(model):
             ln_biases = (
                 comp.removemean(ln_biases[0], method="matrix multiply"),
@@ -161,18 +161,18 @@ def layer_output_terms(
             src_layer,
             dst_layer,
             f,
-            MLPs,
+            mlps,
             OVs,
-            Obias,
-            MLPout,
-            MLPbias,
+            out_bias,
+            mlp_out,
+            mlp_bias,
             ln_biases,
             reverse,
         )
         rows.extend(new_rows)
 
         # center LN bias for the next layer
-        if src_layer == dst_layer and LNs:
+        if src_layer == dst_layer and lns:
             if isGPTJ(model):
                 ln_biases = comp.removemean(ln_biases, method="matrix multiply")
             else:
@@ -205,9 +205,9 @@ def layer_input_terms(
     f: Callable,
     computeMLPterms: bool = False,
     OVs: Optional[list[ParamMatrix]] = None,
-    Obias: Optional[ParamMatrix] = None,
-    MLPout: Optional[ParamMatrix] = None,
-    MLPbias: Optional[ParamMatrix] = None,
+    out_bias: Optional[ParamMatrix] = None,
+    mlp_out: Optional[ParamMatrix] = None,
+    mlp_bias: Optional[ParamMatrix] = None,
     ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
     reverse: bool = False,
 ) -> list[list]:
@@ -225,11 +225,11 @@ def layer_input_terms(
         defined = list()
         if OVs is not None:
             defined.append("att_head")
-        if Obias is not None:
+        if out_bias is not None:
             defined.append("att_head")
-        if MLPout is not None:
+        if mlp_out is not None:
             defined.append("mlp_weight")
-        if MLPbias is not None:
+        if mlp_bias is not None:
             defined.append("mlp_bias")
         if ln_biases is not None:
             defined.append("layernorm_bias")
@@ -253,9 +253,9 @@ def layer_input_terms(
                 dst_layer,
                 f,
                 OVs,
-                Obias,
-                MLPout,
-                MLPbias,
+                out_bias,
+                mlp_out,
+                mlp_bias,
                 ln_biases,
                 reverse,
             )
@@ -277,9 +277,9 @@ def layer_input_terms(
                 dst_layer,
                 f,
                 OVs,
-                Obias,
-                MLPout,
-                MLPbias,
+                out_bias,
+                mlp_out,
+                mlp_bias,
                 ln_biases,
                 reverse,
             )
@@ -294,16 +294,16 @@ def mlp_input_terms(
     dst_layer: int,
     f: Callable,
     OVs: list[ParamMatrix],
-    Obias: Optional[ParamMatrix] = None,
-    MLPout: Optional[ParamMatrix] = None,
-    MLPbias: Optional[ParamMatrix] = None,
+    out_bias: Optional[ParamMatrix] = None,
+    mlp_out: Optional[ParamMatrix] = None,
+    mlp_bias: Optional[ParamMatrix] = None,
     ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
     reverse: bool = False,
 ) -> list[list]:
     """"""
     rows = list()
 
-    MLPin = model.MLPin(dst_layer, factored=True)
+    mlp_in = model.mlp_in(dst_layer, factored=True)
 
     dst_type = "mlp_weight"
     dst_index = 0
@@ -320,7 +320,7 @@ def mlp_input_terms(
         src_type: str,
         src_index: int = 0,
     ):
-        value = f(MLPin, src_M)
+        value = f(mlp_in, src_M)
         return make_rows(
             src_type,
             src_layer,
@@ -337,15 +337,15 @@ def mlp_input_terms(
         for (i, OV) in enumerate(OVs):
             rows.extend(compute_term(OV, "att_head", i))
 
-    if Obias is not None and mlp_takes_input("att_head"):
-        rows.extend(compute_term(Obias, "att_bias"))
+    if out_bias is not None and mlp_takes_input("att_head"):
+        rows.extend(compute_term(out_bias, "att_bias"))
 
     # MLP input
-    if MLPout is not None and mlp_takes_input("mlp_weight"):
-        rows.extend(compute_term(MLPout, "mlp_weight"))
+    if mlp_out is not None and mlp_takes_input("mlp_weight"):
+        rows.extend(compute_term(mlp_out, "mlp_weight"))
 
-    if MLPbias is not None and mlp_takes_input("mlp_bias"):
-        rows.extend(compute_term(MLPbias, "mlp_bias"))
+    if mlp_bias is not None and mlp_takes_input("mlp_bias"):
+        rows.extend(compute_term(mlp_bias, "mlp_bias"))
 
     # LN input
     if ln_biases is not None and mlp_takes_input("layernorm_bias"):
@@ -367,16 +367,16 @@ def att_head_input_terms(
     dst_layer: int,
     f: Callable,
     src_OVs: list[ParamMatrix],
-    Obias: Optional[ParamMatrix] = None,
-    MLPout: Optional[ParamMatrix] = None,
-    MLPbias: Optional[ParamMatrix] = None,
+    out_bias: Optional[ParamMatrix] = None,
+    mlp_out: Optional[ParamMatrix] = None,
+    mlp_bias: Optional[ParamMatrix] = None,
     ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
     reverse: bool = False,
 ) -> list[list]:
     """"""
 
-    QKs = [model.QK(dst_layer, i, factored=True) for i in range(model.num_heads)]
-    dst_OVs = [model.OV(dst_layer, i, factored=True) for i in range(model.num_heads)]
+    QKs = [model.qk(dst_layer, i, factored=True) for i in range(model.num_heads)]
+    dst_OVs = [model.ov(dst_layer, i, factored=True) for i in range(model.num_heads)]
 
     dst_type = "att_head"
 
@@ -437,15 +437,15 @@ def att_head_input_terms(
         for i in range(len(src_OVs)):
             rows.extend(compute_terms(src_OVs[i], "att_head", i))
 
-    if Obias is not None and att_takes_input("att_head"):
-        rows.extend(compute_terms(Obias, "att_bias"))
+    if out_bias is not None and att_takes_input("att_head"):
+        rows.extend(compute_terms(out_bias, "att_bias"))
 
     # MLP input
-    if MLPout is not None and att_takes_input("mlp_weight"):
-        rows.extend(compute_terms(MLPout, "mlp_weight"))
+    if mlp_out is not None and att_takes_input("mlp_weight"):
+        rows.extend(compute_terms(mlp_out, "mlp_weight"))
 
-    if MLPbias is not None and att_takes_input("mlp_bias"):
-        rows.extend(compute_terms(MLPbias, "mlp_bias"))
+    if mlp_bias is not None and att_takes_input("mlp_bias"):
+        rows.extend(compute_terms(mlp_bias, "mlp_bias"))
 
     # LN biases
     if ln_biases is not None and att_takes_input("layernorm_bias"):
