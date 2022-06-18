@@ -12,9 +12,9 @@ from gptomics import model, pairengine, composition as comp
 def main(
     modelname: str,
     outputfilename: str,
-    Obiases: bool = True,
-    MLPs: bool = True,
-    LNs: bool = True,
+    out_biases: bool = True,
+    mlps: bool = True,
+    lns: bool = True,
     verbose: bool = True,
     reverse: bool = False,
     wikidenom: bool = False,
@@ -30,9 +30,9 @@ def main(
     df = pairengine.compute_pair_terms(
         m,
         f,
-        Obiases=Obiases,
-        MLPs=MLPs,
-        LNs=LNs,
+        out_biases=out_biases,
+        mlps=mlps,
+        lns=lns,
         verbose=verbose,
         reverse=reverse,
     )
@@ -60,17 +60,17 @@ if __name__ == "__main__":
     ap.add_argument("modelname", type=str, help="model name")
     ap.add_argument("outputfilename", type=str, help="output filename")
     ap.add_argument(
-        "--no_Obiases",
-        dest="Obiases",
+        "--no_out_biases",
+        dest="out_biases",
         action="store_false",
         help="Do not compute terms for attention head bias terms",
     )
     ap.add_argument(
-        "--no_MLPs", dest="MLPs", action="store_false", help="Do not compute MLP terms"
+        "--no_mlps", dest="mlps", action="store_false", help="Do not compute MLP terms"
     )
     ap.add_argument(
-        "--no_LNs",
-        dest="LNs",
+        "--no_lns",
+        dest="lns",
         action="store_false",
         help="Do not compute Layer Norm terms",
     )
