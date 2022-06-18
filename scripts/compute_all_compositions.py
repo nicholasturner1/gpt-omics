@@ -18,8 +18,9 @@ def main(
     verbose: bool = True,
     reverse: bool = False,
     wikidenom: bool = False,
+    gpu_svd: bool = False,
 ) -> None:
-    m = model.model_by_name(modelname)
+    m = model.model_by_name(modelname, gpu_svd=gpu_svd)
 
     if verbose:
         print("Starting pair term engine")
@@ -89,6 +90,9 @@ if __name__ == "__main__":
         "--wikidenom",
         action="store_true",
         help="Compute reverse edges instead of forward edges.",
+    )
+    ap.add_argument(
+        "--gpu_svd", action="store_true", help="Compute SVDs on the GPU (naively)"
     )
 
     main(**vars(ap.parse_args()))
