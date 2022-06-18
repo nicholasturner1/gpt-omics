@@ -18,8 +18,9 @@ def main(
     mlps: bool = True,
     lns: bool = True,
     verbose: bool = True,
+    gpu_svd: bool = False,
 ) -> None:
-    m = model.model_by_name(modelname)
+    m = model.model_by_name(modelname, gpu_svd=gpu_svd)
 
     if verbose:
         print("Starting pair term engine")
@@ -86,6 +87,9 @@ if __name__ == "__main__":
         dest="verbose",
         action="store_false",
         help="Do not print progress messages",
+    )
+    ap.add_argument(
+        "--gpu_svd", action="store_true", help="Compute SVDs on the GPU (naively)"
     )
 
     main(**vars(ap.parse_args()))

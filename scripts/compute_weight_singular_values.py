@@ -16,12 +16,13 @@ def main(
     modelfilename: str,
     outputfilename: str,
     verbose: bool = True,
+    gpu_svd: bool = False,
 ) -> None:
     if verbose:
         print("Starting computation")
         begin = time.time()
 
-    singularvalues = weight_singular_values(modelfilename)
+    singularvalues = weight_singular_values(modelfilename, gpu_svd=gpu_svd)
 
     if verbose:
         end = time.time()
@@ -30,7 +31,9 @@ def main(
     writenpz(singularvalues, outputfilename)
 
 
-def weight_singular_values(modelfilename: str) -> dict[str, np.ndarray]:
+def weight_singular_values(
+    modelfilename: str, gpu_svd: bool = False
+) -> dict[str, np.ndarray]:
     """Computes the singular values for each tensor with "weight" in its name."""
 
     tensor_names = torchio.read_tensor_names(modelfilename)
@@ -41,7 +44,7 @@ def weight_singular_values(modelfilename: str) -> dict[str, np.ndarray]:
 
     for tn in tqdm(filtered_names):
         tensor = torchio.read_tensor(modelfilename, tn).numpy()
-        svs[tn] = SVD.frommatrix(tensor).S
+        svs[tn] = SVD.frommatrix(tensor, gpu=gpu_svd).S
 
     return svs
 
@@ -68,6 +71,9 @@ if __name__ == "__main__":
         dest="verbose",
         action="store_false",
         help="Do not print progress messages",
+    )
+    ap.add_argument(
+        "--gpu_svd", action="store_true", help="Compute SVDs on the GPU (naively)"
     )
 
     main(**vars(ap.parse_args()))
