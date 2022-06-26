@@ -7,18 +7,51 @@ Models are designed to achieve two functions:
 from __future__ import annotations
 
 import json
-from typing import Union
 from functools import lru_cache
 from types import SimpleNamespace
 
 import numpy as np
 
 from .svd import SVD
+from .types import ParamMatrix
 from . import transformersio, gptneo, torchio
 
 
 CACHESIZE = 16
-ParamMatrix = Union[SVD, np.ndarray]
+
+
+class Layer:
+    """A layer Enum with an index attribute to distinguish multiples.
+
+    The index attribute refers to LAYER index (e.g., mutliple layer norms),
+    and not attention head indices.
+    """
+
+    layername = ""
+
+    def __init__(self, index: int = 0):
+        self.index = index
+
+    def __eq__(self, other):
+        return isinstance(other, type(self)) and self.index == other.index
+
+    def __hash__(self):
+        return hash(f"{self.layername}{self.index}")
+
+
+class SelfAttention(Layer):
+
+    layername = "att_head"
+
+
+class MLP(Layer):
+
+    layername = "mlp"
+
+
+class LayerNorm(Layer):
+
+    layername = "layer norm"
 
 
 class Model:
@@ -27,42 +60,44 @@ class Model:
     def __init__(self, gpu_svd: bool = False):
         self.gpu_svd = gpu_svd
 
-    def qk(self, layer: int, head: int, factored: bool = False) -> ParamMatrix:
+    def qk(self, block: int, head: int, factored: bool = False) -> ParamMatrix:
         """Extracts the QK matrix from a model."""
         raise NotImplementedError
 
-    def ov(self, layer: int, head: int, factored: bool = False) -> ParamMatrix:
+    def ov(self, block: int, head: int, factored: bool = False) -> ParamMatrix:
         """Extracts the OV matrix from a model."""
         raise NotImplementedError
 
-    def out_bias(self, layer: int, factored: bool = False) -> ParamMatrix:
+    def out_bias(self, block: int, factored: bool = False) -> ParamMatrix:
         """Extracts the output bias vector from a model (if it exists)."""
         raise NotImplementedError
 
-    def mlp_in(self, layer: int, factored: bool = False) -> ParamMatrix:
+    def mlp_in(self, block: int, factored: bool = False) -> ParamMatrix:
         """Extracts the MLP input matrix from a model."""
         raise NotImplementedError
 
-    def mlp_out(self, layer: int, factored: bool = False) -> ParamMatrix:
+    def mlp_out(self, block: int, factored: bool = False) -> ParamMatrix:
         """Extracts the MLP output matrix from a model."""
         raise NotImplementedError
 
-    def mlp_bias_in(self, layer: int, factored: bool = False) -> ParamMatrix:
+    def mlp_bias_in(self, block: int, factored: bool = False) -> ParamMatrix:
         """Extracts the MLP input bias from a model."""
         raise NotImplementedError
 
-    def mlp_bias_out(self, layer: int, factored: bool = False) -> ParamMatrix:
+    def mlp_bias_out(self, block: int, factored: bool = False) -> ParamMatrix:
         """Extracts the MLP output bias from a model."""
         raise NotImplementedError
 
-    def ln_biases(
-        self, layer: int, factored: bool = False
-    ) -> tuple[ParamMatrix, ParamMatrix]:
-        """Extracts the Layer norm biases from a model."""
+    def ln_weights(self, block: int, factored: bool = False) -> list[ParamMatrix]:
+        """Extracts the layer norm weights from a model."""
+        raise NotImplementedError
+
+    def ln_biases(self, block: int, factored: bool = False) -> list[ParamMatrix]:
+        """Extracts the layer norm biases from a model."""
         raise NotImplementedError
 
     @property
-    def num_layers(self) -> int:
+    def num_blocks(self) -> int:
         raise NotImplementedError
 
     @property
@@ -82,9 +117,17 @@ class Model:
             return base
 
     def sends_input_to(
-        self, src_type: str, src_layer: int, dst_type: str, dst_layer: int
+        self, src_layer: Layer, src_block: int, dst_layer: Layer, dst_block: int
     ) -> bool:
         """Exposes input/output relationships of a model's architecture."""
+        raise NotImplementedError
+
+    def block_structure(self) -> list[Layer]:
+        """Exposes the order of layers within a transformer block."""
+        raise NotImplementedError
+
+    def normalizing_layer(self, layer: Layer) -> Layer:
+        """Expose which layer norm gives input to the other layers."""
         raise NotImplementedError
 
 
@@ -96,14 +139,14 @@ class GPTNeo_HF(Model):
         self.model = transformersio.load_model(modelname)
         self.gpu_svd = gpu_svd
 
-    def qk(self, layer: int, head: int, factored: bool = False) -> ParamMatrix:
+    def qk(self, block: int, head: int, factored: bool = False) -> ParamMatrix:
         config = self.model.config
         head_dim = config.hidden_size // config.num_heads
 
         assert head < config.num_heads
-        assert layer < config.num_layers
+        assert block < config.num_layers
 
-        attention = self.model.transformer.h[layer].attn.attention
+        attention = self.model.transformer.h[block].attn.attention
         Q = attention.q_proj.weight.data.numpy()
         K = attention.k_proj.weight.data.numpy()
 
@@ -112,14 +155,14 @@ class GPTNeo_HF(Model):
 
         return self.maybe_factor(factored, Qh.T, Kh)
 
-    def ov(self, layer: int, head: int, factored: bool = False) -> ParamMatrix:
+    def ov(self, block: int, head: int, factored: bool = False) -> ParamMatrix:
         config = self.model.config
         head_dim = config.hidden_size // config.num_heads
 
         assert head < config.num_heads
-        assert layer < config.num_layers
+        assert block < config.num_layers
 
-        attention = self.model.transformer.h[layer].attn.attention
+        attention = self.model.transformer.h[block].attn.attention
         O = attention.out_proj.weight.data.numpy()
         V = attention.v_proj.weight.data.numpy()
 
@@ -128,57 +171,80 @@ class GPTNeo_HF(Model):
 
         return self.maybe_factor(factored, Oh, Vh)
 
-    def out_bias(self, layer: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.out_bias(self.model, layer))
+    def out_bias(self, block: int, factored: bool = False) -> ParamMatrix:
+        return self.maybe_factor(factored, gptneo.out_bias(self.model, block))
 
-    def mlp_in(self, layer: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_in(self.model, layer))
+    def mlp_in(self, block: int, factored: bool = False) -> ParamMatrix:
+        return self.maybe_factor(factored, gptneo.mlp_in(self.model, block))
 
-    def mlp_out(self, layer: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_out(self.model, layer))
+    def mlp_out(self, block: int, factored: bool = False) -> ParamMatrix:
+        return self.maybe_factor(factored, gptneo.mlp_out(self.model, block))
 
-    def mlp_bias_in(self, layer: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_bias_in(self.model, layer))
+    def mlp_bias_in(self, block: int, factored: bool = False) -> ParamMatrix:
+        return self.maybe_factor(factored, gptneo.mlp_bias_in(self.model, block))
 
-    def mlp_bias_out(self, layer: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_bias_out(self.model, layer))
+    def mlp_bias_out(self, block: int, factored: bool = False) -> ParamMatrix:
+        return self.maybe_factor(factored, gptneo.mlp_bias_out(self.model, block))
+
+    def ln_weights(
+        self, block: int, factored: bool = False
+    ) -> tuple[ParamMatrix, ParamMatrix]:
+        weights = gptneo.ln_weights(self.model, block)
+        return (
+            self.maybe_factor(factored, weights[0]),
+            self.maybe_factor(factored, weights[1]),
+        )
 
     def ln_biases(
-        self, layer: int, factored: bool = False
+        self, block: int, factored: bool = False
     ) -> tuple[ParamMatrix, ParamMatrix]:
-        biases = gptneo.ln_biases(self.model, layer)
+        biases = gptneo.ln_biases(self.model, block)
         return (
             self.maybe_factor(factored, biases[0]),
             self.maybe_factor(factored, biases[1]),
         )
 
     @property
-    def num_layers(self) -> int:
+    def num_blocks(self) -> int:
         return self.model.config.num_layers
 
     @property
     def num_heads(self) -> int:
         return self.model.config.num_heads
 
+    def block_structure(self) -> list[Layer]:
+        return [LayerNorm(0), SelfAttention(), LayerNorm(1), MLP()]
+
     def sends_input_to(
-        self, src_type: str, src_layer: int, dst_type: str, dst_layer: int
+        self, src_layer: Layer, src_block: int, dst_layer: Layer, dst_block: int
     ) -> bool:
-        if src_layer > dst_layer:
+        if src_block > dst_block:
             return False
 
-        elif src_layer == dst_layer:
-            # attention heads are first
-            if dst_type == "att_head":
+        elif src_block == dst_block:
+
+            if dst_layer == LayerNorm(0):
                 return False
-
-            elif dst_type == "mlp_weight":
-                return src_type in ["layernorm_bias1", "att_head"]
-
+            elif dst_layer == SelfAttention():
+                return src_layer == LayerNorm(0)
+            elif dst_layer == LayerNorm(1):
+                return src_layer == SelfAttention()
+            elif dst_layer == MLP():
+                return src_layer in [SelfAttention(), LayerNorm(1)]
             else:
-                raise ValueError(f"unknown dst_type: {dst_type}")
+                raise ValueError(f"unknown dst_layer: {dst_layer}")
 
-        else:  # src_layer < dst_layer
-            return True
+        else:  # src_block < dst_block
+            return not isinstance(src_layer, LayerNorm)
+
+    def normalizing_layer(self, layer: Layer) -> Layer:
+        assert layer in self.block_structure(), f"unknown layer: {layer}"
+        assert layer in [SelfAttention(), MLP()], f"not a normalizer layer: {layer}"
+
+        if layer == SelfAttention():
+            return LayerNorm(0)
+        else:  # layer == MLP():
+            return LayerNorm(1)
 
 
 class CachedFileModel(Model):
@@ -221,13 +287,13 @@ class GPTJ(CachedFileModel):
     """A CachedFileModel for interacting with GPT-J."""
 
     @lru_cache(maxsize=CACHESIZE)
-    def qk(self, layer: int, head: int, factored: bool = True) -> ParamMatrix:
+    def qk(self, block: int, head: int, factored: bool = True) -> ParamMatrix:
         assert head < self.config.n_head, f"head #{head} does not exist"
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
+        assert block < self.config.n_layer, f"block #{block} does not exist"
 
         # _f : the "full" set of parameters across heads
-        Qf = self.fetch_tensor(f"transformer.h.{layer}.attn.q_proj.weight")
-        Kf = self.fetch_tensor(f"transformer.h.{layer}.attn.k_proj.weight")
+        Qf = self.fetch_tensor(f"transformer.h.{block}.attn.q_proj.weight")
+        Kf = self.fetch_tensor(f"transformer.h.{block}.attn.k_proj.weight")
 
         head_dim = self.config.n_embd // self.config.n_head
 
@@ -237,13 +303,13 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, Q.T, K)
 
     @lru_cache(maxsize=CACHESIZE)
-    def ov(self, layer: int, head: int, factored: bool = True) -> ParamMatrix:
+    def ov(self, block: int, head: int, factored: bool = True) -> ParamMatrix:
         assert head < self.config.n_head, f"head #{head} does not exist"
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
+        assert block < self.config.n_layer, f"block #{block} does not exist"
 
         # _f : the "full" set of parameters across heads
-        Of = self.fetch_tensor(f"transformer.h.{layer}.attn.out_proj.weight")
-        Vf = self.fetch_tensor(f"transformer.h.{layer}.attn.v_proj.weight")
+        Of = self.fetch_tensor(f"transformer.h.{block}.attn.out_proj.weight")
+        Vf = self.fetch_tensor(f"transformer.h.{block}.attn.v_proj.weight")
 
         head_dim = self.config.n_embd // self.config.n_head
 
@@ -253,54 +319,65 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, O, V)
 
     @lru_cache(maxsize=CACHESIZE)
-    def out_bias(self, layer: int, factored: bool = True):  # type: ignore[override]
+    def out_bias(self, block: int, factored: bool = True):  # type: ignore[override]
         return None
 
     @lru_cache(maxsize=CACHESIZE)
-    def mlp_in(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
+    def mlp_in(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.config.n_layer, f"block #{block} does not exist"
 
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.weight")
-
-        return self.maybe_factor(factored, M)
-
-    @lru_cache(maxsize=CACHESIZE)
-    def mlp_out(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
-
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_out.weight")
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.fc_in.weight")
 
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def mlp_bias_in(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
+    def mlp_out(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.config.n_layer, f"block #{block} does not exist"
 
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_in.bias")
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.fc_out.weight")
 
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def mlp_bias_out(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
+    def mlp_bias_in(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.config.n_layer, f"block #{block} does not exist"
 
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.fc_out.bias")
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.fc_in.bias")
 
         return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def mlp_bias_out(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.config.n_layer, f"block #{block} does not exist"
+
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.fc_out.bias")
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def ln_weights(  # type: ignore[override]
+        self, block: int, factored: bool = True
+    ) -> ParamMatrix:
+        assert block < self.config.n_layer, f"block #{block} does not exist"
+
+        # only one bias for GPT-J since att and mlp applied in parallel
+        bias = self.fetch_tensor(f"transformer.h.{block}.ln_1.weight")
+
+        return self.maybe_factor(factored, bias)
 
     @lru_cache(maxsize=CACHESIZE)
     def ln_biases(  # type: ignore[override]
-        self, layer: int, factored: bool = True
+        self, block: int, factored: bool = True
     ) -> ParamMatrix:
-        assert layer < self.config.n_layer, f"layer #{layer} does not exist"
+        assert block < self.config.n_layer, f"block #{block} does not exist"
 
         # only one bias for GPT-J since att and mlp applied in parallel
-        bias = self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias")
+        bias = self.fetch_tensor(f"transformer.h.{block}.ln_1.bias")
 
         return self.maybe_factor(factored, bias)
 
     @property
-    def num_layers(self) -> int:
+    def num_blocks(self) -> int:
         return self.config.n_layer
 
     @property
@@ -308,30 +385,43 @@ class GPTJ(CachedFileModel):
         return self.config.n_head
 
     def sends_input_to(
-        self, src_type: str, src_layer: int, dst_type: str, dst_layer: int
+        self, src_layer: Layer, src_block: int, dst_layer: Layer, dst_block: int
     ) -> bool:
-        if src_layer > dst_layer:
+        if src_block > dst_block:
             return False
 
-        elif src_layer == dst_layer:
-            return src_type == "layernorm_bias"
+        elif src_block == dst_block:
+            if dst_layer == LayerNorm(0):
+                return False
 
-        else:  # src_layer < dst_layer
-            return True
+            elif dst_layer in [SelfAttention(), MLP()]:
+                return src_layer == LayerNorm(0)
+
+            else:
+                raise ValueError(f"unrecognized layer: {dst_layer}")
+
+        else:  # src_block < dst_block
+            return not isinstance(src_layer, LayerNorm)
+
+    def normalizing_layer(self, layer: Layer) -> Layer:
+        assert layer in self.block_structure(), f"unknown layer: {layer}"
+        assert layer in [SelfAttention(), MLP()], f"not a normalizer layer: {layer}"
+
+        return LayerNorm(0)
 
 
 class GPTNeo(CachedFileModel, GPTNeo_HF):
     """A CachedFileModel for interacting with GPT-Neo models."""
 
     @lru_cache(maxsize=CACHESIZE)
-    def qk(self, layer: int, head: int, factored: bool = True) -> ParamMatrix:
+    def qk(self, block: int, head: int, factored: bool = True) -> ParamMatrix:
         assert head < self.num_heads, f"head #{head} does not exist"
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
+        assert block < self.num_blocks, f"block #{block} does not exist"
         head_dim = self.config.hidden_size // self.config.num_heads
 
         # _f : the "full" set of parameters across heads
-        Qf = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.q_proj.weight")
-        Kf = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.k_proj.weight")
+        Qf = self.fetch_tensor(f"transformer.h.{block}.attn.attention.q_proj.weight")
+        Kf = self.fetch_tensor(f"transformer.h.{block}.attn.attention.k_proj.weight")
 
         Q = Qf[head * head_dim : (head + 1) * head_dim, :]
         K = Kf[head * head_dim : (head + 1) * head_dim, :]
@@ -339,14 +429,14 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, Q.T, K)
 
     @lru_cache(maxsize=CACHESIZE)
-    def ov(self, layer: int, head: int, factored: bool = True) -> ParamMatrix:
+    def ov(self, block: int, head: int, factored: bool = True) -> ParamMatrix:
         assert head < self.num_heads, f"head #{head} does not exist"
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
+        assert block < self.num_blocks, f"block #{block} does not exist"
         head_dim = self.config.hidden_size // self.config.num_heads
 
         # _f : the "full" set of parameters across heads
-        Of = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.out_proj.weight")
-        Vf = self.fetch_tensor(f"transformer.h.{layer}.attn.attention.v_proj.weight")
+        Of = self.fetch_tensor(f"transformer.h.{block}.attn.attention.out_proj.weight")
+        Vf = self.fetch_tensor(f"transformer.h.{block}.attn.attention.v_proj.weight")
 
         O = Of[:, head * head_dim : (head + 1) * head_dim]
         V = Vf[head * head_dim : (head + 1) * head_dim, :]
@@ -354,54 +444,70 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.maybe_factor(factored, O, V)
 
     @lru_cache(maxsize=CACHESIZE)
-    def out_bias(self, layer: int, factored: bool = False) -> ParamMatrix:
+    def out_bias(self, block: int, factored: bool = False) -> ParamMatrix:
         out_bias = self.fetch_tensor(
-            f"transformer.h.{layer}.attn.attention.out_proj.bias"
+            f"transformer.h.{block}.attn.attention.out_proj.bias"
         )
 
         return self.maybe_factor(factored, out_bias)
 
     @lru_cache(maxsize=CACHESIZE)
-    def mlp_in(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
+    def mlp_in(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.num_blocks, f"block #{block} does not exist"
 
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_fc.weight")
-
-        return self.maybe_factor(factored, M)
-
-    @lru_cache(maxsize=CACHESIZE)
-    def mlp_out(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
-
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_proj.weight")
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.c_fc.weight")
 
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def mlp_bias_in(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
+    def mlp_out(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.num_blocks, f"block #{block} does not exist"
 
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_fc.bias")
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.c_proj.weight")
 
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def mlp_bias_out(self, layer: int, factored: bool = True) -> ParamMatrix:
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
+    def mlp_bias_in(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.num_blocks, f"block #{block} does not exist"
 
-        M = self.fetch_tensor(f"transformer.h.{layer}.mlp.c_proj.bias")
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.c_fc.bias")
 
         return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def mlp_bias_out(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.num_blocks, f"block #{block} does not exist"
+
+        M = self.fetch_tensor(f"transformer.h.{block}.mlp.c_proj.bias")
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def ln_weights(  # type: ignore[override]
+        self, block: int, factored: bool = True
+    ) -> tuple[ParamMatrix, ParamMatrix]:
+        assert block < self.num_blocks, f"block #{block} does not exist"
+
+        weights = (
+            self.fetch_tensor(f"transformer.h.{block}.ln_1.weight"),
+            self.fetch_tensor(f"transformer.h.{block}.ln_2.weight"),
+        )
+
+        return (
+            self.maybe_factor(factored, weights[0]),
+            self.maybe_factor(factored, weights[1]),
+        )
 
     @lru_cache(maxsize=CACHESIZE)
     def ln_biases(  # type: ignore[override]
-        self, layer: int, factored: bool = True
+        self, block: int, factored: bool = True
     ) -> tuple[ParamMatrix, ParamMatrix]:
-        assert layer < self.num_layers, f"layer #{layer} does not exist"
+        assert block < self.num_blocks, f"block #{block} does not exist"
 
         biases = (
-            self.fetch_tensor(f"transformer.h.{layer}.ln_1.bias"),
-            self.fetch_tensor(f"transformer.h.{layer}.ln_2.bias"),
+            self.fetch_tensor(f"transformer.h.{block}.ln_1.bias"),
+            self.fetch_tensor(f"transformer.h.{block}.ln_2.bias"),
         )
 
         return (
@@ -410,7 +516,7 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         )
 
     @property
-    def num_layers(self) -> int:
+    def num_blocks(self) -> int:
         return self.config.num_layers
 
     @property

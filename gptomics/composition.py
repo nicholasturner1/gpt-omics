@@ -8,9 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from .svd import SVD
-
-
-ParamMatrix = Union[np.ndarray, SVD]
+from .types import ParamMatrix
 
 
 def frobnorm(M: Union[np.ndarray, SVD]) -> np.float32:

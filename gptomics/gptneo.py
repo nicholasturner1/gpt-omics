@@ -91,6 +91,18 @@ def mlp_bias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     return model.transformer.h[layer].mlp.c_proj.bias.data.numpy()
 
 
+def ln_weights(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
+    """Extracts the layer norm biases from a given layer of the model."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    weight_1 = model.transformer.h[layer].ln_1.weight.data.numpy()
+    weight_2 = model.transformer.h[layer].ln_2.weight.data.numpy()
+
+    return weight_1, weight_2
+
+
 def ln_biases(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
     """Extracts the layer norm biases from a given layer of the model."""
     config = model.config
