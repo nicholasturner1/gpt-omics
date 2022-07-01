@@ -17,6 +17,8 @@ def frobnorm(M: Union[np.ndarray, SVD]) -> np.float32:
         return np.linalg.norm(M.ravel())
     elif isinstance(M, SVD):
         return np.linalg.norm(M.S)
+    elif isinstance(M, torch.Tensor):
+        return M.norm()
     else:
         raise ValueError(f"unexpected type {type(M)}")
 
@@ -27,6 +29,8 @@ def singularvals(M: Union[np.ndarray, SVD]) -> np.ndarray:
         return np.linalg.svd(M, full_matrices=False)[1]
     elif isinstance(M, SVD):
         return M.S
+    elif isinstance(M, torch.Tensor):
+        return np.linalg.svd(M.detach().numpy(), full_matrices=False)[1]
     else:
         raise ValueError(f"unexpected type {type(M)}")
 
