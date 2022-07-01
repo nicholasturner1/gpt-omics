@@ -3,44 +3,45 @@
 Writes a pandas csv as output where each row specifies a single composition term.
 """
 import time
-from collections.abc import Iterable
-from typing import Callable, Optional, Union
+import argparse
+import itertools
+from functools import partial
+from collections import OrderedDict
+from typing import Callable, Union, Optional, Iterable
 
 import numpy as np
 import pandas as pd
 
-from .model import Model, GPTJ
 from .svd import SVD
-from gptomics import composition as comp
+from .types import ParamMatrix
+from . import composition as comp
+from .model import Model, Layer, SelfAttention, MLP, LayerNorm, model_by_name
 
-
-ParamMatrix = Union[np.ndarray, SVD]
 
 STDCOLNAMES = [
     "src_type",
-    "src_layer",
+    "src_block",
     "src_index",
     "dst_type",
-    "dst_layer",
+    "dst_block",
     "dst_index",
     "term_type",
     "term_value",
 ]
 
-
-def isGPTJ(model: Model):
-    return isinstance(model, GPTJ)
+__all__ = ["compute_pair_terms", "pair_engine_fn", "parse_args"]
 
 
 def compute_pair_terms(
     model: Model,
     f: Callable,
     colnames: list[str] = STDCOLNAMES,
-    out_biases: bool = True,
+    att_heads: bool = True,
     mlps: bool = True,
     lns: bool = True,
     verbose: int = 1,
     reverse: bool = False,
+    blocks: Optional[list[int]] = None,
 ) -> pd.DataFrame:
     """Computes f across all input/output pairs within a model.
 
@@ -50,14 +51,17 @@ def compute_pair_terms(
         A dataframe that describes each composition term.
     """
     terms = list()
-    layers = range(0, model.num_layers)
-    if reverse:
-        layers = reversed(layers)  # type: ignore[assignment]
+    blocks = range(0, model.num_blocks) if blocks is None else blocks
 
-    for layer in layers:
+    edge_types = collect_edge_types(att_heads, mlps, lns)
+
+    if reverse:
+        blocks = reversed(blocks)  # type: ignore[assignment]
+
+    for block in blocks:
         terms.append(
-            layer_output_terms(
-                model, layer, f, colnames, out_biases, mlps, lns, verbose, reverse
+            block_output_terms(
+                model, block, f, colnames, edge_types, verbose, reverse, blocks
             )
         )
     if verbose:
@@ -66,16 +70,37 @@ def compute_pair_terms(
     return pd.concat(terms, ignore_index=True)
 
 
-def layer_output_terms(
+def collect_edge_types(
+    att_heads: bool = True, mlps: bool = True, lns: bool = True
+) -> list[tuple[Layer, Layer]]:
+    """Figures out which types of edge terms the user wants to compute."""
+    src_types = list()
+    dst_types = list()
+
+    if att_heads:
+        src_types.append(SelfAttention())
+        dst_types.append(SelfAttention())
+
+    if mlps:
+        src_types.append(MLP())
+        dst_types.append(MLP())
+
+    if lns:
+        src_types.append(LayerNorm(0))
+        src_types.append(LayerNorm(1))
+
+    return list(itertools.product(src_types, dst_types))
+
+
+def block_output_terms(
     model: Model,
-    src_layer: int,
+    src_block: int,
     f: Callable,
     colnames: list[str],
-    out_biases: bool = True,
-    mlps: bool = True,
-    lns: bool = True,
+    edge_types: list[tuple[Layer, Layer]],
     verbose: int = 1,
     reverse: bool = False,
+    blocks: Optional[list[int]] = None,
 ) -> pd.DataFrame:
     """Computes f across all outputs of a given layer.
 
@@ -87,110 +112,46 @@ def layer_output_terms(
     """
     rows = list()
 
-    num_heads = model.num_heads
+    # Timing parameter loading (shown if verbose > 1)
+    begin = time.time()
 
-    # Extracting output parameters from the model
-    if verbose > 1:
-        begin = time.time()
-        print("Extracting OVs")
-    OVs = [
-        comp.removemean(
-            model.ov(src_layer, head, factored=True), method="matrix multiply"
-        )
-        for head in range(num_heads)
-    ]
+    src_types = [edge[0] for edge in edge_types]
+    src_tensors = block_output_tensors(model, src_block, src_types, factored=True)
 
-    if out_biases:
-        if verbose > 1:
-            print("Extracting output biases")
-        out_bias = comp.removemean(
-            model.out_bias(src_layer, factored=True), method="matrix multiply"
-        )
-    else:
-        out_bias = None
-
-    if mlps:
-        if verbose > 1:
-            print("Extracting mlps")
-        mlp_out = comp.removemean(
-            model.mlp_out(src_layer, factored=True), method="matrix multiply"
-        )
-        mlp_bias = comp.removemean(
-            model.mlp_bias_out(src_layer, factored=True), method="matrix multiply"
-        )
-    else:
-        mlp_out, mlp_bias = None, None
-
-    # Layer norm biases
-    # NOTE: these may not pass through an LN before
-    # being read by another layer, so they should only be
-    # centered once they do.
-    if lns:
-        if verbose > 1:
-            print("Extracting lns")
-        ln_biases = model.ln_biases(src_layer, factored=True)
-        if not isGPTJ(model):
-            ln_biases = (
-                comp.removemean(ln_biases[0], method="matrix multiply"),
-                ln_biases[1],
-            )
-        else:
-            # one LN per layer
-            # only hits another LN by the next layer
-            pass
-    else:
-        ln_biases = None
+    end = time.time()
 
     if verbose > 1:
-        end = time.time()
         print(f"Output parameter loading finished in {end-begin:.3f}s")
 
-    if not reverse:
-        dst_layers = range(src_layer, model.num_layers)
-    else:
-        dst_layers = reversed(range(0, src_layer + 1))  # type: ignore[assignment]
+    blocks = set(blocks)
 
-    for dst_layer in dst_layers:
+    def inblocks(b):
+        return b in blocks
+
+    if not reverse:
+        dst_blocks = filter(inblocks, range(src_block, model.num_blocks))
+    else:
+        dst_blocks = filter(
+            inblocks, reversed(range(0, src_block + 1))
+        )  # type: ignore[assignment]
+
+    for dst_block in dst_blocks:
         if verbose:
             print(
-                f"Computing terms between layers: {src_layer}->{dst_layer}",
+                f"Computing terms between blocks: {src_block}->{dst_block}",
                 end="     \r",
             )
-        new_rows = layer_input_terms(
+        new_rows = block_input_terms(
             model,
-            src_layer,
-            dst_layer,
+            src_block,
+            dst_block,
             f,
-            mlps,
-            OVs,
-            out_bias,
-            mlp_out,
-            mlp_bias,
-            ln_biases,
+            edge_types,
+            src_tensors,
             reverse,
         )
         rows.extend(new_rows)
 
-        # center LN bias for the next layer
-        if src_layer == dst_layer and lns:
-            if isGPTJ(model):
-                ln_biases = comp.removemean(ln_biases, method="matrix multiply")
-            else:
-                # two bias terms, 1st normalized within layer_input_terms,
-                # and we need to replicate that work for the other layers
-                ln_biases = (
-                    comp.removemean(ln_biases[0], method="matrix multiply"),
-                    ln_biases[1],
-                )
-
-        # abs accounts for reversed terms
-        if abs(src_layer - dst_layer) == 1:
-            if not isGPTJ(model):
-                # 2nd bias normalized within input_terms for this layer
-                ln_biases = (
-                    ln_biases[0],
-                    comp.removemean(ln_biases[0], method="matrix multiply"),
-                )
     if verbose:
         print("")
 
@@ -198,194 +159,293 @@ def layer_output_terms(
     return pd.DataFrame.from_dict(rowdict, orient="index", columns=colnames)
 
 
-def layer_input_terms(
+def block_output_tensors(
     model: Model,
-    src_layer: int,
-    dst_layer: int,
+    block: int,
+    layertypes: list[Layer] = [SelfAttention, MLP, LayerNorm],
+    factored: bool = True,
+) -> list[Union[None, ParamMatrix, list[ParamMatrix]]]:
+    """Reads all contributions of a single layer to the residual stream."""
+    layers = model.block_structure()
+
+    layernorms = None
+    tensors = list()
+    for layer in layers:
+        if isinstance(layer, SelfAttention):
+            if layer in layertypes:
+                att_tensors = [
+                    model.ov(block, head, factored) for head in range(model.num_heads)
+                ]
+
+                # adding the bias in the final spot if present
+                out_bias = model.out_bias(block, factored)
+                if out_bias is not None:
+                    att_tensors.append(model.out_bias(block, factored))
+
+                tensors.append(att_tensors)
+            else:
+                tensors.append(None)
+
+        elif isinstance(layer, MLP):
+            if layer in layertypes:
+                tensors.append(
+                    [
+                        model.mlp_out(block, factored),
+                        model.mlp_bias_out(block, factored),
+                    ]
+                )
+            else:
+                tensors.append(None)
+
+        elif isinstance(layer, LayerNorm):
+            if layer in layertypes:
+                if layernorms is None:  # first layer norm
+                    layernorms = model.ln_biases(block, factored)
+                tensors.append(layernorms[layer.index])
+            else:
+                tensors.append(None)
+
+        else:
+            raise ValueError(f"unrecognized layer type: {layer}")
+
+    return BlockTensors(layers, tensors)
+
+
+class BlockTensors:
+    """A container class to facilitate handling the tensors of a block in order."""
+
+    def __init__(self, layers, tensors):
+        assert len(layers) == len(tensors), "mismatched layers & tensors"
+        assert all(isinstance(layer, Layer) for layer in layers)
+
+        self.__dict = OrderedDict(zip(layers, tensors))
+
+    def __iter__(self) -> Iterable:
+        return iter(self.__dict.items())
+
+    def __len__(self) -> int:
+        return len(self.layers)
+
+    def __getitem__(self, layer: Layer):
+        return self.__dict[layer]
+
+    def __setitem__(self, layer: Layer, value) -> None:
+        self.__dict[layer] = value
+
+    @property
+    def layers(self):
+        return self.__dict.keys()
+
+    @property
+    def tensors(self):
+        return self.__dict.values()
+
+
+def block_input_terms(
+    model: Model,
+    src_block: int,
+    dst_block: int,
     f: Callable,
-    computeMLPterms: bool = False,
-    OVs: Optional[list[ParamMatrix]] = None,
-    out_bias: Optional[ParamMatrix] = None,
-    mlp_out: Optional[ParamMatrix] = None,
-    mlp_bias: Optional[ParamMatrix] = None,
-    ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
+    edge_types: list[tuple[Layer, Layer]],
+    src_tensors: BlockTensors,
     reverse: bool = False,
 ) -> list[list]:
-    """Computes f across all inputs of a given layer.
+    """Computes f across all inputs of a given block.
 
     Args:
         model: A model wrapped as a parameter bag
-        src_layer: The (base 0) index of the source of parameter arguments.
+        src_block: The (base 0) index of the source of parameter arguments.
     Returns:
-        A dataframe that describes each composition weight for the source layer.
+        A dataframe that describes each composition weight for the source block.
     """
     rows = list()
 
-    def takes_any_input(dst_type: str) -> bool:
-        defined = list()
-        if OVs is not None:
-            defined.append("att_head")
-        if out_bias is not None:
-            defined.append("att_head")
-        if mlp_out is not None:
-            defined.append("mlp_weight")
-        if mlp_bias is not None:
-            defined.append("mlp_bias")
-        if ln_biases is not None:
-            defined.append("layernorm_bias")
+    output_types = set(edge[0] for edge in edge_types)
+    input_types = set(edge[1] for edge in edge_types)
 
+    def takes_any_input(dst_layer: str) -> bool:
         if not reverse:
             return any(
-                model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
-                for src_type in defined
+                model.sends_input_to(src_layer, src_block, dst_layer, dst_block)
+                for src_layer in output_types
             )
         else:
             return any(
-                model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
-                for src_type in defined
+                model.sends_input_to(src_layer, dst_block, dst_layer, src_block)
+                for src_layer in output_types
             )
 
-    if takes_any_input("att_head"):
-        rows.extend(
-            att_head_input_terms(
-                model,
-                src_layer,
-                dst_layer,
-                f,
-                OVs,
-                out_bias,
-                mlp_out,
-                mlp_bias,
-                ln_biases,
-                reverse,
-            )
-        )
+    for layer in model.block_structure():
+        if layer in input_types and takes_any_input(layer):
 
-    # abs accounts for reversed terms
-    if abs(src_layer - dst_layer) == 1 and not isGPTJ(model):
-        # center second LN bias
-        ln_biases = (
-            ln_biases[0],
-            comp.removemean(ln_biases[1], method="matrix multiply"),
-        )
+            if isinstance(layer, SelfAttention):
+                layernorm = model.normalizing_layer(layer)
+                normed_tensors = apply_layer_norm(
+                    model, src_block, dst_block, layernorm, src_tensors, reverse
+                )
+                rows.extend(
+                    att_head_input_terms(
+                        model,
+                        src_block,
+                        dst_block,
+                        layer,
+                        f,
+                        normed_tensors,
+                        reverse,
+                    )
+                )
 
-    if computeMLPterms and takes_any_input("mlp_weight"):
-        rows.extend(
-            mlp_input_terms(
-                model,
-                src_layer,
-                dst_layer,
-                f,
-                OVs,
-                out_bias,
-                mlp_out,
-                mlp_bias,
-                ln_biases,
-                reverse,
-            )
-        )
+            elif isinstance(layer, MLP):
+                layernorm = model.normalizing_layer(layer)
+                normed_tensors = apply_layer_norm(
+                    model, src_block, dst_block, layernorm, src_tensors, reverse
+                )
+                rows.extend(
+                    mlp_input_terms(
+                        model,
+                        src_block,
+                        dst_block,
+                        layer,
+                        f,
+                        normed_tensors,
+                        reverse,
+                    )
+                )
+
+            else:
+                raise ValueError(f"unrecognized layer type: {layer}")
 
     return rows
 
 
+def apply_layer_norm(
+    model: Model,
+    src_block: int,
+    dst_block: int,
+    dst_layer: Layer,
+    src_tensors: BlockTensors,
+    reverse: bool = False,
+) -> None:
+    """Modifies the contribution spaces to account for a layer norm in-place."""
+    ln_scale = model.ln_weights(dst_block, factored=False)
+
+    if isinstance(ln_scale, tuple):
+        ln_scale = ln_scale[dst_layer.index]
+
+    ln_scale = SVD.frommatrix(np.diag(ln_scale.ravel()))
+
+    def ln_takes_input(src_layer: Layer) -> bool:
+        if not reverse:
+            return model.sends_input_to(src_layer, src_block, dst_layer, dst_block)
+        else:
+            return model.sends_input_to(src_layer, dst_block, dst_layer, src_block)
+
+    def apply_ln(tensor: ParamMatrix) -> ParamMatrix:
+        centered = comp.removemean(tensor, "matrix multiply")
+        return ln_scale @ centered
+
+    normed_layers = list()
+    normed_tensors = list()
+    for layer, tensor in src_tensors:
+        if ln_takes_input(layer):
+
+            # tensor values within BlockTensors can be a list or a single tensor
+            if isinstance(tensor, list):
+                normed_layers.append(layer)
+                normed_tensors.append(list(map(apply_ln, tensor)))
+            elif isinstance(tensor, SVD) or isinstance(tensor, np.ndarray):
+                normed_tensors.append(apply_ln(tensor))
+            else:
+                pass
+
+        # Accounting for this layer's own unnormalized input to the next layer
+        elif layer == dst_layer and src_block == dst_block:
+            normed_layers.append(layer)
+            normed_tensors.append(tensor)
+
+    return BlockTensors(normed_layers, normed_tensors)
+
+
 def mlp_input_terms(
     model: Model,
-    src_layer: int,
-    dst_layer: int,
+    src_block: int,
+    dst_block: int,
+    dst_layer: Layer,
     f: Callable,
-    OVs: list[ParamMatrix],
-    out_bias: Optional[ParamMatrix] = None,
-    mlp_out: Optional[ParamMatrix] = None,
-    mlp_bias: Optional[ParamMatrix] = None,
-    ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
+    src_tensors: BlockTensors,
     reverse: bool = False,
 ) -> list[list]:
-    """"""
-    rows = list()
+    """Computes the terms of f that describe an input to an MLP layer."""
+    # Reading input weight parameters
+    mlp_in = model.mlp_in(dst_block, factored=True)
 
-    mlp_in = model.mlp_in(dst_layer, factored=True)
-
-    dst_type = "mlp_weight"
-    dst_index = 0
-    term_type = "mlp"
-
-    def mlp_takes_input(src_type):
+    # Some shortcuts to make the code cleaner below
+    def mlp_takes_input(src_layer: Layer) -> bool:
         if not reverse:
-            return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+            return model.sends_input_to(src_layer, src_block, dst_layer, dst_block)
         else:
-            return model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
+            return model.sends_input_to(src_layer, dst_block, dst_layer, src_block)
 
-    def compute_term(
+    def compute_terms(
         src_M: ParamMatrix,
-        src_type: str,
+        src_typename: str,
         src_index: int = 0,
-    ):
+    ) -> list:
         value = f(mlp_in, src_M)
         return make_rows(
-            src_type,
-            src_layer,
+            src_typename,
+            src_block,
             src_index,
-            dst_type,
-            dst_layer,
-            dst_index,
-            term_type,
+            dst_layer.layername,
+            dst_block,
+            dst_layer.index,
+            "mlp_weight",
             value,
         )
 
-    # attention head input
-    if OVs is not None and mlp_takes_input("att_head"):
-        for (i, OV) in enumerate(OVs):
-            rows.extend(compute_term(OV, "att_head", i))
+    # Actually computing the terms
+    rows = list()
 
-    if out_bias is not None and mlp_takes_input("att_head"):
-        rows.extend(compute_term(out_bias, "att_bias"))
+    for layer, tensor in src_tensors:
+        if mlp_takes_input(layer) and tensor is not None:
 
-    # MLP input
-    if mlp_out is not None and mlp_takes_input("mlp_weight"):
-        rows.extend(compute_term(mlp_out, "mlp_weight"))
+            if isinstance(layer, SelfAttention) and tensor is not None:
+                for (i, ov) in enumerate(tensor[: model.num_heads]):
+                    rows.extend(compute_terms(ov, layer.layername, i))
+                # computing terms for the self-attention bias if it exists
+                for (i, ob) in enumerate(tensor[model.num_heads :]):
+                    rows.extend(compute_terms(ob, "att_bias", i))
 
-    if mlp_bias is not None and mlp_takes_input("mlp_bias"):
-        rows.extend(compute_term(mlp_bias, "mlp_bias"))
+            if isinstance(layer, MLP) and tensor is not None:
+                rows.extend(compute_terms(tensor[0], "mlp_weight", layer.index))
+                rows.extend(compute_terms(tensor[1], "mlp_bias", layer.index))
 
-    # LN input
-    if ln_biases is not None and mlp_takes_input("layernorm_bias"):
-        if isGPTJ(model):
-            # single bias
-            rows.extend(compute_term(ln_biases, "layernorm_bias"))
-        else:
-            # two biases
-            rows.extend(compute_term(ln_biases[0], "layernorm_bias1"))
-            if src_layer != dst_layer:
-                rows.extend(compute_term(ln_biases[1], "layernorm_bias2"))
+            if isinstance(layer, LayerNorm) and tensor is not None:
+                rows.extend(compute_terms(tensor, "layernorm_bias", layer.index))
 
     return rows
 
 
 def att_head_input_terms(
     model: Model,
-    src_layer: int,
-    dst_layer: int,
+    src_block: int,
+    dst_block: int,
+    dst_layer: Layer,
     f: Callable,
-    src_OVs: list[ParamMatrix],
-    out_bias: Optional[ParamMatrix] = None,
-    mlp_out: Optional[ParamMatrix] = None,
-    mlp_bias: Optional[ParamMatrix] = None,
-    ln_biases: Optional[Union[tuple[ParamMatrix, ParamMatrix], ParamMatrix]] = None,
+    src_tensors: BlockTensors,
     reverse: bool = False,
 ) -> list[list]:
-    """"""
-
-    QKs = [model.qk(dst_layer, i, factored=True) for i in range(model.num_heads)]
-    dst_OVs = [model.ov(dst_layer, i, factored=True) for i in range(model.num_heads)]
-
-    dst_type = "att_head"
+    """Computes the terms of f that describe an input to a SelfAttention layer."""
+    # Reading input weight parameters
+    qks = [model.qk(dst_block, i, factored=True) for i in range(model.num_heads)]
+    ovs = [model.ov(dst_block, i, factored=True) for i in range(model.num_heads)]
 
     # Convenience functions
-    def att_takes_input(src_type):
+    def att_takes_input(src_layer):
         if not reverse:
-            return model.sends_input_to(src_type, src_layer, dst_type, dst_layer)
+            return model.sends_input_to(src_layer, src_block, dst_layer, dst_block)
         else:
-            return model.sends_input_to(src_type, dst_layer, dst_type, src_layer)
+            return model.sends_input_to(src_layer, dst_block, dst_layer, src_block)
 
     def _make_rows(
         term_value,
@@ -397,10 +457,10 @@ def att_head_input_terms(
         """A shortcut to avoid repeating args."""
         return make_rows(
             src_type,
-            src_layer,
+            src_block,
             src_index,
-            dst_type,
-            dst_layer,
+            dst_layer.layername,
+            dst_block,
             dst_index,
             term_type,
             term_value,
@@ -412,50 +472,41 @@ def att_head_input_terms(
         src_index: int = 0,
     ):
         """Computes terms for a given input matrix."""
-        Qterms = [f(QK.T, src_M) for QK in QKs]
-        Kterms = [f(QK, src_M) for QK in QKs]
-        Vterms = [f(OV, src_M) for OV in dst_OVs]
+        qterms = [f(qk.T, src_M) for qk in qks]
+        kterms = [f(qk, src_M) for qk in qks]
+        vterms = [f(ov, src_M) for ov in ovs]
 
         rows = list()
-        for (i, Qt) in enumerate(Qterms):
-            rows.extend(_make_rows(Qt, "Q", src_type, src_index, i))
+        for (i, qt) in enumerate(qterms):
+            rows.extend(_make_rows(qt, "Q", src_type, src_index, i))
 
-        for (i, Kt) in enumerate(Kterms):
-            rows.extend(_make_rows(Kt, "K", src_type, src_index, i))
+        for (i, kt) in enumerate(kterms):
+            rows.extend(_make_rows(kt, "K", src_type, src_index, i))
 
-        for (i, Vt) in enumerate(Vterms):
-            newrows = _make_rows(Vt, "V", src_type, src_index, i)
-            rows.extend(newrows)
+        for (i, vt) in enumerate(vterms):
+            rows.extend(_make_rows(vt, "V", src_type, src_index, i))
 
         return rows
 
     # Actual logic
     rows = list()
 
-    # attention head input
-    if src_OVs is not None and att_takes_input("att_head"):
-        for i in range(len(src_OVs)):
-            rows.extend(compute_terms(src_OVs[i], "att_head", i))
+    for layer, tensor in src_tensors:
+        if att_takes_input(layer) and tensor is not None:
 
-    if out_bias is not None and att_takes_input("att_head"):
-        rows.extend(compute_terms(out_bias, "att_bias"))
+            if isinstance(layer, SelfAttention) and tensor is not None:
+                for (i, ov) in enumerate(tensor[: model.num_heads]):
+                    rows.extend(compute_terms(ov, layer.layername, i))
+                # computing terms for the self-attention bias if it exists
+                for (i, ob) in enumerate(tensor[model.num_heads :]):
+                    rows.extend(compute_terms(ob, "att_bias", i))
 
-    # MLP input
-    if mlp_out is not None and att_takes_input("mlp_weight"):
-        rows.extend(compute_terms(mlp_out, "mlp_weight"))
+            if isinstance(layer, MLP) and tensor is not None:
+                rows.extend(compute_terms(tensor[0], "mlp_weight", layer.index))
+                rows.extend(compute_terms(tensor[1], "mlp_bias", layer.index))
 
-    if mlp_bias is not None and att_takes_input("mlp_bias"):
-        rows.extend(compute_terms(mlp_bias, "mlp_bias"))
-
-    # LN biases
-    if ln_biases is not None and att_takes_input("layernorm_bias"):
-        if isGPTJ(model):
-            # single bias
-            rows.extend(compute_terms(ln_biases, "layernorm_bias"))
-        elif src_layer != dst_layer:
-            # two biases
-            rows.extend(compute_terms(ln_biases[0], "layernorm_bias1"))
-            rows.extend(compute_terms(ln_biases[1], "layernorm_bias2"))
+            if isinstance(layer, LayerNorm) and tensor is not None:
+                rows.extend(compute_terms(tensor, "layernorm_bias", layer.index))
 
     return rows
 
@@ -485,3 +536,87 @@ def make_rows(
         return [[*fixed_fields, v, i] for (i, v) in enumerate(term_value)]
     else:
         return [[*fixed_fields, term_value]]
+
+
+def pair_engine_fn(f: Callable) -> Callable:
+    """A decorator for making computation scripts easier to write."""
+
+    def wrapped(
+        modelname: Model,
+        outputfilename: str,
+        colnames: list[str] = STDCOLNAMES,
+        att_heads: bool = True,
+        mlps: bool = True,
+        lns: bool = True,
+        verbose: int = 1,
+        reverse: bool = False,
+        gpu_svd: bool = False,
+        *args,
+        **kwargs,
+    ) -> None:
+
+        model = model_by_name(modelname, gpu_svd)
+
+        if verbose:
+            print("Starting pair term engine")
+            begin = time.time()
+
+        partial_f = partial(f, *args, **kwargs)
+
+        df = compute_pair_terms(
+            model,
+            partial_f,
+            colnames=colnames,
+            att_heads=att_heads,
+            mlps=mlps,
+            lns=lns,
+            verbose=verbose,
+            reverse=reverse,
+        )
+
+        if verbose:
+            end = time.time()
+            print(f"Pair engine computation complete in {end-begin:.3f}s")
+
+        df.to_csv(outputfilename)
+
+    return wrapped
+
+
+def parse_args(ap: Optional[argparse.ArgumentParser] = None) -> argparse.ArgumentParser:
+    """An argument parsing function for making computation scripts easier to write."""
+    ap = argparse.ArgumentParser() if ap is None else ap
+
+    ap.add_argument("modelname", type=str, help="model name")
+    ap.add_argument("outputfilename", type=str, help="output filename")
+    ap.add_argument(
+        "--no_att_heads",
+        dest="att_heads",
+        action="store_false",
+        help="Do not compute terms for attention head bias terms",
+    )
+    ap.add_argument(
+        "--no_mlps", dest="mlps", action="store_false", help="Do not compute MLP terms"
+    )
+    ap.add_argument(
+        "--no_lns",
+        dest="lns",
+        action="store_false",
+        help="Do not compute Layer Norm terms",
+    )
+    ap.add_argument(
+        "--quiet",
+        dest="verbose",
+        action="store_false",
+        help="Do not print progress messages",
+    )
+    ap.add_argument(
+        "--reverse",
+        action="store_true",
+        help="Compute reverse edges instead of forward edges.",
+    )
+    ap.add_argument(
+        "--gpu_svd", action="store_true", help="Compute SVDs on the GPU (naively)"
+    )
+
+    return ap.parse_args()

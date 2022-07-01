@@ -12,18 +12,18 @@ COLORS = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
 def filterdf(
     df: pd.DataFrame,
-    src_layer: Optional[int] = None,
-    dst_layer: Optional[int] = None,
+    src_block: Optional[int] = None,
+    dst_block: Optional[int] = None,
     src_type: Optional[str] = None,
     dst_type: Optional[str] = None,
     term_type: Optional[str] = None,
 ) -> pd.DataFrame:
     """Filters the rows of a composition df by a set of conditions."""
-    if src_layer is not None:
-        subdf = df[df.src_layer == src_layer]
+    if src_block is not None:
+        subdf = df[df.src_block == src_block]
 
-    if dst_layer is not None:
-        subdf = df[df.dst_layer == dst_layer]
+    if dst_block is not None:
+        subdf = df[df.dst_block == dst_block]
 
     if src_type is not None:
         subdf = df[df.src_type == src_type]
@@ -40,7 +40,7 @@ def filterdf(
 def plot_all_head_input_dists(
     df: pd.DataFrame,
     src_type: Optional[str] = None,
-    src_layer: Optional[int] = None,
+    src_block: Optional[int] = None,
     term_type: Optional[str] = None,
     logy: Optional[bool] = True,
 ) -> plt.Figure:
@@ -48,25 +48,25 @@ def plot_all_head_input_dists(
     xlim = (0, 1)
     bins = np.linspace(0, 1, 21)
 
-    df = filterdf(df, src_type=src_type, src_layer=src_layer, term_type=term_type)
+    df = filterdf(df, src_type=src_type, src_block=src_block, term_type=term_type)
 
-    layers = sorted(pd.unique(df.dst_layer).tolist())
-    layers = list(filter(lambda x: x != 0, layers))  # removing layer 0
+    blocks = sorted(pd.unique(df.dst_block).tolist())
+    blocks = list(filter(lambda x: x != 0, blocks))  # removing block 0
 
     heads = sorted(pd.unique(df.dst_index).tolist())
 
-    num_layers = len(layers)
+    num_blocks = len(blocks)
     num_heads = len(heads)
 
-    for layer in layers:
+    for block in blocks:
         for head in heads:
-            plt.subplot(num_layers, num_heads, num_heads * (layer - 1) + head + 1)
+            plt.subplot(num_blocks, num_heads, num_heads * (block - 1) + head + 1)
 
-            plt.title(f"head: {head} layer: {layer}")
+            plt.title(f"head: {head} block: {block}")
             subdf = df[
                 (df.dst_type == "att_head")
                 & (df.dst_index == head)
-                & (df.dst_layer == layer)
+                & (df.dst_block == block)
             ]
 
             plt.hist(subdf.term_value, color="k", bins=bins)
@@ -150,6 +150,9 @@ def percentiles_by_type(
     if legend:
         ax.legend()
 
+    ax.set_xlim(0.5, grouped.bin.max() + 0.5)
+    ax.set_ylim(0, 1)
+
     return ax
 
 
@@ -180,17 +183,17 @@ def compute_percentile_bins(
     return np.digitize(df[colname], bins=percs)
 
 
-def plot_layerdists(
+def plot_blockdists(
     df: pd.DataFrame,
     color="k",
     ax: plt.Axes = None,
     fontsize: int = DEFAULT_FONTSIZE,
     **kwargs,
 ) -> plt.Axes:
-    """Plots the distribution of layer distance between edges in a DataFrame.
+    """Plots the distribution of block distance between edges in a DataFrame.
 
-    The layer distance is equal to the difference between the destination layer
-    index and the source layer index.
+    The block distance is equal to the difference between the destination block
+    index and the source block index.
 
     Args:
         df: Dataframe containing composition/singular values.
@@ -202,17 +205,17 @@ def plot_layerdists(
     """
     ax = plt.gca() if ax is None else ax
 
-    diffs = df.dst_layer - df.src_layer
+    diffs = df.dst_block - df.src_block
 
     ax.hist(diffs, bins=np.arange(29), color=color),
-    ax.set_xlabel("Layer distance", fontsize=fontsize)
+    ax.set_xlabel("Block distance", fontsize=fontsize)
     ax.set_ylabel("Count", fontsize=fontsize)
     ax.set_xlim(0, 28)
 
     return ax
 
 
-def plot_grp_layerdist_hist(
+def plot_grp_blockdist_hist(
     df: pd.DataFrame,
     grp: int = 20,
     grp_colname: str = "overall_5p_grp",
@@ -220,10 +223,10 @@ def plot_grp_layerdist_hist(
     ax: plt.Axes = None,
     fontsize: int = DEFAULT_FONTSIZE,
 ) -> plt.Axes:
-    """Plots the distribution of layer distance between edges in a DataFrame.
+    """Plots the distribution of block distance between edges in a DataFrame.
 
-    The layer distance is equal to the difference between the destination layer
-    index and the source layer index.
+    The block distance is equal to the difference between the destination block
+    index and the source block index.
 
     Args:
         df: Dataframe containing composition/singular values.
@@ -237,7 +240,7 @@ def plot_grp_layerdist_hist(
     """
     groupdf = df[df[grp_colname] == grp]
 
-    return plot_layerdists(groupdf, color=color, ax=ax, fontsize=fontsize)
+    return plot_blockdists(groupdf, color=color, ax=ax, fontsize=fontsize)
 
 
 def plot_ipc_percentiles(

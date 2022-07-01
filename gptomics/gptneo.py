@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import torch
 import numpy as np
+from torch import nn
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoForCausalLM
 
 
@@ -18,9 +19,14 @@ def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     assert head < config.num_heads
     assert layer < config.num_layers
 
-    attention = model.transformer.h[layer].attn.attention
-    Q = attention.q_proj.weight.data.numpy()
-    K = attention.k_proj.weight.data.numpy()
+    return module_qk(
+        model.transformer.h[layer].attn.attention, head, head_dim
+    ).data.numpy()
+
+
+def module_qk(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
+    Q = module.q_proj.weight
+    K = module.k_proj.weight
 
     Qh = Q[head * head_dim : (head + 1) * head_dim, :]
     Kh = K[head * head_dim : (head + 1) * head_dim, :]
@@ -28,7 +34,9 @@ def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     return Qh.T @ Kh
 
 
-def ov(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
+def ov(
+    model: GPTNeoForCausalLM, layer: int, head: int, tensor: bool = False
+) -> np.ndarray:
     """Extracts the OV matrix from a given head & layer from the model."""
     config = model.config
     head_dim = config.hidden_size // config.num_heads
@@ -36,9 +44,14 @@ def ov(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     assert head < config.num_heads
     assert layer < config.num_layers
 
-    attention = model.transformer.h[layer].attn.attention
-    O = attention.out_proj.weight.data.numpy()
-    V = attention.v_proj.weight.data.numpy()
+    return module_ov(
+        model.transformer.h[layer].attn.attention, head, head_dim
+    ).data.numpy()
+
+
+def module_ov(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
+    O = module.out_proj.weight
+    V = module.v_proj.weight
 
     Oh = O[:, head * head_dim : (head + 1) * head_dim]
     Vh = V[head * head_dim : (head + 1) * head_dim, :]
@@ -89,6 +102,18 @@ def mlp_bias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
     assert layer < config.num_layers
 
     return model.transformer.h[layer].mlp.c_proj.bias.data.numpy()
+
+
+def ln_weights(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
+    """Extracts the layer norm biases from a given layer of the model."""
+    config = model.config
+
+    assert layer < config.num_layers
+
+    weight_1 = model.transformer.h[layer].ln_1.weight.data.numpy()
+    weight_2 = model.transformer.h[layer].ln_2.weight.data.numpy()
+
+    return weight_1, weight_2
 
 
 def ln_biases(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
