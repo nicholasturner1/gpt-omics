@@ -41,6 +41,7 @@ def compute_pair_terms(
     lns: bool = True,
     verbose: int = 1,
     reverse: bool = False,
+    blocks: Optional[list[int]] = None,
 ) -> pd.DataFrame:
     """Computes f across all input/output pairs within a model.
 
@@ -50,7 +51,7 @@ def compute_pair_terms(
         A dataframe that describes each composition term.
     """
     terms = list()
-    blocks = range(0, model.num_blocks)
+    blocks = range(0, model.num_blocks) if blocks is None else blocks
 
     edge_types = collect_edge_types(att_heads, mlps, lns)
 
@@ -59,7 +60,9 @@ def compute_pair_terms(
 
     for block in blocks:
         terms.append(
-            block_output_terms(model, block, f, colnames, edge_types, verbose, reverse)
+            block_output_terms(
+                model, block, f, colnames, edge_types, verbose, reverse, blocks
+            )
         )
     if verbose:
         print("")
@@ -97,6 +100,7 @@ def block_output_terms(
     edge_types: list[tuple[Layer, Layer]],
     verbose: int = 1,
     reverse: bool = False,
+    blocks: Optional[list[int]] = None,
 ) -> pd.DataFrame:
     """Computes f across all outputs of a given layer.
 
@@ -119,10 +123,17 @@ def block_output_terms(
     if verbose > 1:
         print(f"Output parameter loading finished in {end-begin:.3f}s")
 
+    blocks = set(blocks)
+
+    def inblocks(b):
+        return b in blocks
+
     if not reverse:
-        dst_blocks = range(src_block, model.num_blocks)
+        dst_blocks = filter(inblocks, range(src_block, model.num_blocks))
     else:
-        dst_blocks = reversed(range(0, src_block + 1))  # type: ignore[assignment]
+        dst_blocks = filter(
+            inblocks, reversed(range(0, src_block + 1))
+        )  # type: ignore[assignment]
 
     for dst_block in dst_blocks:
         if verbose:
