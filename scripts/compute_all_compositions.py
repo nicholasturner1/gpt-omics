@@ -15,19 +15,17 @@ def main(
     dst_M: ParamMatrix,
     src_M: ParamMatrix,
     center: bool = False,
-    wikidenom: bool = True,
+    denom: str = "wiki",
 ) -> np.float32:
-    return comp.basecomposition(dst_M, src_M, center=center, wikidenom=wikidenom)
+    return comp.basecomposition(dst_M, src_M, center=center, denom=denom)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
 
     ap.add_argument(
-        "--origdenom",
-        dest="wikidenom",
-        action="store_false",
-        help="Compute reverse edges instead of forward edges.",
+        "--denom",
+        help="Which denominator to use",
     )
 
     main(**vars(pairengine.parse_args(ap)))

@@ -56,17 +56,25 @@ def basecomposition(
     dst_M: Union[np.ndarray, SVD],
     src_M: Union[np.ndarray, SVD],
     center: bool = True,
-    wikidenom: bool = False,
+    denom: str = "wiki",
 ) -> np.float32:
     """Computes composition assuming that the matrices are properly transposed."""
     if center:
         src_M = removemean(src_M)
 
     numerator = frobnorm(dst_M @ src_M)
+    denominator = compute_denom(dst_M, src_M, denom=denom)
 
-    if not wikidenom:
+    return numerator / denominator
+
+
+def compute_denom(
+    dst_M: ParamMatrix, src_M: ParamMatrix, denom: str = "wiki"
+) -> np.float32:
+    if denom == "orig":
         denominator = frobnorm(dst_M) * frobnorm(src_M)
-    else:
+
+    elif denom == "wiki":
         d1 = singularvals(dst_M)
         d2 = singularvals(src_M)
 
@@ -75,9 +83,29 @@ def basecomposition(
         elif len(d2) > len(d1):
             d1 = zeropad(d1, len(d2))
 
-        denominator = np.linalg.norm(d1 * d2)
+        denominator = frobnorm(d1 * d2)
 
-    return numerator / denominator
+    elif denom == "none" or denom == "one":
+        denominator = 1.0
+
+    elif denom == "dst_orig":
+        denominator = frobnorm(dst_M)
+
+    elif denom == "dst_wiki":
+        d1 = singularvals(dst_M)
+        d2 = singularvals(src_M)
+
+        if len(d1) > len(d2):
+            d2 = zeropad(d2, len(d1))
+        elif len(d2) > len(d1):
+            d1 = zeropad(d1, len(d2))
+
+        denominator = frobnorm(d1 * (d2 != 0))
+
+    else:
+        raise ValueError(f"unrecognized denominator: {denom}")
+
+    return denominator
 
 
 def zeropad(v: np.ndarray, newlen: int):
