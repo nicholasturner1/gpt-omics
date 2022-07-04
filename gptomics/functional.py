@@ -101,11 +101,14 @@ def register_standardize_output(
             return mod.bias.view(1, 1, -1)
 
         elif src_type == "att_head":
-            OV = gptneo.module_ov(mod.attention, src_index, head_dim)
+            # usual matrix order is transposed here
+            OV = gptneo.module_ov(mod.attention, src_index, head_dim).T
 
-            return OV.view((1,) + OV.shape)
+            # attention layer outputs need to be a tuple
+            return (OV.view((1,) + OV.shape),)
 
         elif src_type == "att_bias":
+            # attention layer outputs need to be a tuple
             return (mod.attention.out_proj.bias.view(1, 1, -1),)
 
         elif src_type == "mlp_weight":
