@@ -578,7 +578,10 @@ def pair_engine_fn(f: Callable) -> Callable:
             end = time.time()
             print(f"Pair engine computation complete in {end-begin:.3f}s")
 
-        df.to_csv(outputfilename)
+        if outputfilename.endswith(".gz"):
+            df.to_csv(outputfilename, compression="gzip")
+        else:
+            df.to_csv(outputfilename)
 
     return wrapped
 

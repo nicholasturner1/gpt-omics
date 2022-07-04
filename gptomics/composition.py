@@ -79,8 +79,8 @@ def compute_denom(
         denominator = frobnorm(dst_M) * frobnorm(src_M)
 
     elif denom == "wiki":
-        d1 = singularvals(dst_M)
-        d2 = singularvals(src_M)
+        d1 = singularvals(dst_M).ravel()
+        d2 = singularvals(src_M).ravel()
 
         if len(d1) > len(d2):
             d2 = zeropad(d2, len(d1))
