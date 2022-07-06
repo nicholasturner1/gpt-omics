@@ -384,6 +384,9 @@ class GPTJ(CachedFileModel):
     def num_heads(self) -> int:
         return self.config.n_head
 
+    def block_structure(self) -> list[Layer]:
+        return [LayerNorm(), SelfAttention(), MLP()]
+
     def sends_input_to(
         self, src_layer: Layer, src_block: int, dst_layer: Layer, dst_block: int
     ) -> bool:

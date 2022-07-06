@@ -201,7 +201,10 @@ def block_output_tensors(
             if layer in layertypes:
                 if layernorms is None:  # first layer norm
                     layernorms = model.ln_biases(block, factored)
-                tensors.append(layernorms[layer.index])
+                if isinstance(layernorms, tuple) or isinstance(layernorms, list):
+                    tensors.append(layernorms[layer.index])
+                else:
+                    tensors.append(layernorms)
             else:
                 tensors.append(None)
 
