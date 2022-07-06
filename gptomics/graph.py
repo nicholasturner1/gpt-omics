@@ -22,25 +22,25 @@ def pair_term_graph(pair_term_df: pd.DataFrame):
 
     gvlookup = dict()
     types = g.new_vertex_property("string")
-    layers = g.new_vertex_property("int")
+    blocks = g.new_vertex_property("int")
     indices = g.new_vertex_property("int")
     for gv, v in zip(gvs, vertices):
         gvlookup[v] = gv
 
         types[gv] = v.type
-        layers[gv] = v.layer
+        blocks[gv] = v.block
         indices[gv] = v.index
 
     g.vertex_properties["type"] = types
-    g.vertex_properties["layer"] = layers
+    g.vertex_properties["block"] = blocks
     g.vertex_properties["index"] = indices
 
     # graph metadata
     src_types = g.new_edge_property("string")
-    src_layers = g.new_edge_property("int")
+    src_blocks = g.new_edge_property("int")
     src_indices = g.new_edge_property("int")
     dst_types = g.new_edge_property("string")
-    dst_layers = g.new_edge_property("int")
+    dst_blocks = g.new_edge_property("int")
     dst_indices = g.new_edge_property("int")
     term_types = g.new_edge_property("string")
     term_values = g.new_edge_property("float")
@@ -49,19 +49,19 @@ def pair_term_graph(pair_term_df: pd.DataFrame):
         graphedge = g.add_edge(gvlookup[edge.src], gvlookup[edge.dst])
 
         src_types[graphedge] = edge.src.type
-        src_layers[graphedge] = edge.src.layer
+        src_blocks[graphedge] = edge.src.block
         src_indices[graphedge] = edge.src.index
         dst_types[graphedge] = edge.dst.type
-        dst_layers[graphedge] = edge.dst.layer
+        dst_blocks[graphedge] = edge.dst.block
         dst_indices[graphedge] = edge.dst.index
         term_types[graphedge] = edge.term_type
         term_values[graphedge] = edge.term_value
 
     g.edge_properties["src_type"] = src_types
-    g.edge_properties["src_layer"] = src_layers
+    g.edge_properties["src_block"] = src_blocks
     g.edge_properties["src_indices"] = src_indices
     g.edge_properties["dst_type"] = dst_types
-    g.edge_properties["dst_layer"] = dst_layers
+    g.edge_properties["dst_block"] = dst_blocks
     g.edge_properties["dst_indices"] = dst_indices
     g.edge_properties["term_type"] = term_types
     g.edge_properties["term_value"] = term_values
@@ -70,7 +70,7 @@ def pair_term_graph(pair_term_df: pd.DataFrame):
 
 
 # Small dataclass-esque objects
-Vertex = NamedTuple("Vertex", [("type", str), ("layer", int), ("index", int)])
+Vertex = NamedTuple("Vertex", [("type", str), ("block", int), ("index", int)])
 
 
 Edge = NamedTuple(
@@ -88,18 +88,18 @@ def extract_edges(pair_term_df: pd.DataFrame):
         A list of vertices and edges that describe the graph.
     """
 
-    def vertex_to_name(vertex_type: str, layer: int, index: int) -> str:
-        return f"{vertex_type}-{layer}-{index}"
+    def vertex_to_name(vertex_type: str, block: int, index: int) -> str:
+        return f"{vertex_type}-{block}-{index}"
 
     vertices = set()
     edges = list()
 
     for (st, sl, si, dt, dl, di, tt, tv) in zip(
         pair_term_df["src_type"],
-        pair_term_df["src_layer"],
+        pair_term_df["src_block"],
         pair_term_df["src_index"],
         pair_term_df["dst_type"],
-        pair_term_df["dst_layer"],
+        pair_term_df["dst_block"],
         pair_term_df["dst_index"],
         pair_term_df["term_type"],
         pair_term_df["term_value"],
@@ -174,19 +174,19 @@ def input_path_complexities(g: gt.Graph) -> list[float]:
     """Computes input path complexities for each vertex in the graph.
 
     Input path complexity is defined as the length of the longest input
-    path normalized by the maximum possible length (base-0 layer index).
+    path normalized by the maximum possible length (base-0 block index).
 
     Args:
         g: Graph describing pair terms.
     """
     longest_inputs = longest_input_paths(g)
 
-    layers = g.vertex_properties["layer"].a
+    blocks = g.vertex_properties["block"].a
 
-    layers[layers == 0] = -1
+    blocks[blocks == 0] = -1
 
-    complexities = longest_inputs / layers
-    complexities[layers == -1] = -1
+    complexities = longest_inputs / blocks
+    complexities[blocks == -1] = -1
 
     return complexities
 
