@@ -7,7 +7,7 @@ import argparse
 import itertools
 from functools import partial
 from collections import OrderedDict
-from typing import Callable, Union, Optional, Iterable
+from typing import Callable, Union, Optional, Generator
 
 import numpy as np
 import pandas as pd
@@ -51,12 +51,12 @@ def compute_pair_terms(
         A dataframe that describes each composition term.
     """
     terms = list()
-    blocks = range(0, model.num_blocks) if blocks is None else blocks
+    blocks = list(range(0, model.num_blocks)) if blocks is None else blocks
 
     edge_types = collect_edge_types(att_heads, mlps, lns)
 
     if reverse:
-        blocks = reversed(blocks)  # type: ignore[assignment]
+        blocks = list(reversed(blocks))  # type: ignore[assignment]
 
     for block in blocks:
         terms.append(
@@ -74,8 +74,8 @@ def collect_edge_types(
     att_heads: bool = True, mlps: bool = True, lns: bool = True
 ) -> list[tuple[Layer, Layer]]:
     """Figures out which types of edge terms the user wants to compute."""
-    src_types = list()
-    dst_types = list()
+    src_types: list[Layer] = list()
+    dst_types: list[Layer] = list()
 
     if att_heads:
         src_types.append(SelfAttention())
@@ -100,7 +100,7 @@ def block_output_terms(
     edge_types: list[tuple[Layer, Layer]],
     verbose: int = 1,
     reverse: bool = False,
-    blocks: Optional[list[int]] = None,
+    blocks: list[int] = [],
 ) -> pd.DataFrame:
     """Computes f across all outputs of a given layer.
 
@@ -123,10 +123,10 @@ def block_output_terms(
     if verbose > 1:
         print(f"Output parameter loading finished in {end-begin:.3f}s")
 
-    blocks = set(blocks)
+    blocks_ = set(blocks)
 
     def inblocks(b):
-        return b in blocks
+        return b in blocks_
 
     if not reverse:
         dst_blocks = filter(inblocks, range(src_block, model.num_blocks))
@@ -159,17 +159,47 @@ def block_output_terms(
     return pd.DataFrame.from_dict(rowdict, orient="index", columns=colnames)
 
 
+class BlockTensors:
+    """A container class to facilitate handling the tensors of a block in order."""
+
+    def __init__(self, layers, tensors):
+        assert len(layers) == len(tensors), "mismatched layers & tensors"
+        assert all(isinstance(layer, Layer) for layer in layers)
+
+        self.__dict = OrderedDict(zip(layers, tensors))
+
+    def __iter__(self) -> Generator:
+        return iter(self.__dict.items())
+
+    def __len__(self) -> int:
+        return len(self.layers)
+
+    def __getitem__(self, layer: Layer):
+        return self.__dict[layer]
+
+    def __setitem__(self, layer: Layer, value) -> None:
+        self.__dict[layer] = value
+
+    @property
+    def layers(self):
+        return self.__dict.keys()
+
+    @property
+    def tensors(self):
+        return self.__dict.values()
+
+
 def block_output_tensors(
     model: Model,
     block: int,
-    layertypes: list[Layer] = [SelfAttention, MLP, LayerNorm],
+    layertypes: list[Layer] = [SelfAttention(), MLP(), LayerNorm()],
     factored: bool = True,
-) -> list[Union[None, ParamMatrix, list[ParamMatrix]]]:
+) -> BlockTensors:
     """Reads all contributions of a single layer to the residual stream."""
     layers = model.block_structure()
 
     layernorms = None
-    tensors = list()
+    tensors: list[Union[None, ParamMatrix, list[ParamMatrix]]] = list()
     for layer in layers:
         if isinstance(layer, SelfAttention):
             if layer in layertypes:
@@ -214,36 +244,6 @@ def block_output_tensors(
     return BlockTensors(layers, tensors)
 
 
-class BlockTensors:
-    """A container class to facilitate handling the tensors of a block in order."""
-
-    def __init__(self, layers, tensors):
-        assert len(layers) == len(tensors), "mismatched layers & tensors"
-        assert all(isinstance(layer, Layer) for layer in layers)
-
-        self.__dict = OrderedDict(zip(layers, tensors))
-
-    def __iter__(self) -> Iterable:
-        return iter(self.__dict.items())
-
-    def __len__(self) -> int:
-        return len(self.layers)
-
-    def __getitem__(self, layer: Layer):
-        return self.__dict[layer]
-
-    def __setitem__(self, layer: Layer, value) -> None:
-        self.__dict[layer] = value
-
-    @property
-    def layers(self):
-        return self.__dict.keys()
-
-    @property
-    def tensors(self):
-        return self.__dict.values()
-
-
 def block_input_terms(
     model: Model,
     src_block: int,
@@ -266,7 +266,7 @@ def block_input_terms(
     output_types = set(edge[0] for edge in edge_types)
     input_types = set(edge[1] for edge in edge_types)
 
-    def takes_any_input(dst_layer: str) -> bool:
+    def takes_any_input(dst_layer: Layer) -> bool:
         if not reverse:
             return any(
                 model.sends_input_to(src_layer, src_block, dst_layer, dst_block)
@@ -328,14 +328,12 @@ def apply_layer_norm(
     dst_layer: Layer,
     src_tensors: BlockTensors,
     reverse: bool = False,
-) -> None:
+) -> BlockTensors:
     """Modifies the contribution spaces to account for a layer norm in-place."""
-    ln_scale = model.ln_weights(dst_block, factored=False)
+    ln_weights = model.ln_weights(dst_block, factored=False)[dst_layer.index]
+    assert isinstance(ln_weights, np.ndarray)
 
-    if isinstance(ln_scale, tuple):
-        ln_scale = ln_scale[dst_layer.index]
-
-    ln_scale = SVD.frommatrix(np.diag(ln_scale.ravel()))
+    ln_scalemat = SVD.frommatrix(np.diag(ln_weights.ravel()))
 
     def ln_takes_input(src_layer: Layer) -> bool:
         if not reverse:
@@ -345,10 +343,10 @@ def apply_layer_norm(
 
     def apply_ln(tensor: ParamMatrix) -> ParamMatrix:
         centered = comp.removemean(tensor, "matrix multiply")
-        return ln_scale @ centered
+        return ln_scalemat @ centered
 
     normed_layers = list()
-    normed_tensors = list()
+    normed_tensors: list[Union[None, ParamMatrix, list[ParamMatrix]]] = list()
     for layer, tensor in src_tensors:
         if ln_takes_input(layer):
 
@@ -522,7 +520,7 @@ def make_rows(
     dst_layer: int,
     dst_index: int,
     term_type: str,
-    term_value: Union[Iterable, float],
+    term_value: Union[Generator, float],
 ) -> list[list]:
     """Formats the values returned by the callable as rows."""
     fixed_fields = [
@@ -535,7 +533,7 @@ def make_rows(
         term_type,
     ]
 
-    if isinstance(term_value, Iterable):
+    if isinstance(term_value, Generator):
         return [[*fixed_fields, v, i] for (i, v) in enumerate(term_value)]
     else:
         return [[*fixed_fields, term_value]]
@@ -545,7 +543,7 @@ def pair_engine_fn(f: Callable) -> Callable:
     """A decorator for making computation scripts easier to write."""
 
     def wrapped(
-        modelname: Model,
+        modelname: str,
         outputfilename: str,
         colnames: list[str] = STDCOLNAMES,
         att_heads: bool = True,
@@ -589,7 +587,7 @@ def pair_engine_fn(f: Callable) -> Callable:
     return wrapped
 
 
-def parse_args(ap: Optional[argparse.ArgumentParser] = None) -> argparse.ArgumentParser:
+def parse_args(ap: Optional[argparse.ArgumentParser] = None) -> argparse.Namespace:
     """An argument parsing function for making computation scripts easier to write."""
     ap = argparse.ArgumentParser() if ap is None else ap
 

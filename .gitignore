@@ -130,3 +130,6 @@ dmypy.json
 
 # Vim
 *.swp
+
+# Notebooks (I don't want to push all of them)
+*.ipynb

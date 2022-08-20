@@ -90,7 +90,7 @@ def compute_denom(
         denominator = frobnorm(d1 * d2)
 
     elif denom == "none" or denom == "one":
-        denominator = 1.0
+        denominator = np.float32(1.0)
 
     elif denom == "dst_orig":
         denominator = frobnorm(dst_M)

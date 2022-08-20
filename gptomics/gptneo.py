@@ -25,8 +25,15 @@ def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
 
 
 def module_qk(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
+
+    assert isinstance(module.q_proj, nn.Module)
+    assert isinstance(module.k_proj, nn.Module)
+
     Q = module.q_proj.weight
     K = module.k_proj.weight
+
+    assert isinstance(Q, torch.Tensor)
+    assert isinstance(K, torch.Tensor)
 
     Qh = Q[head * head_dim : (head + 1) * head_dim, :]
     Kh = K[head * head_dim : (head + 1) * head_dim, :]
@@ -50,8 +57,15 @@ def ov(
 
 
 def module_ov(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
+
+    assert isinstance(module.out_proj, nn.Module)
+    assert isinstance(module.v_proj, nn.Module)
+
     O = module.out_proj.weight
     V = module.v_proj.weight
+
+    assert isinstance(O, torch.Tensor)
+    assert isinstance(V, torch.Tensor)
 
     Oh = O[:, head * head_dim : (head + 1) * head_dim]
     Vh = V[head * head_dim : (head + 1) * head_dim, :]

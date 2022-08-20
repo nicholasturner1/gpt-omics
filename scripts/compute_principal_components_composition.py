@@ -27,7 +27,6 @@ def main(
     df = pairengine.compute_pair_terms(
         m,
         principal_component,
-        out_biases=out_biases,
         mlps=mlps,
         lns=lns,
         verbose=verbose,

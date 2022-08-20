@@ -225,7 +225,7 @@ def all_paths(g: gt.Graph, verbose: bool = True) -> list[list[int]]:
     """
 
     def dfs(
-        g: gt.Graph, currpath: list[list[int]], branchpaths: list[list[int]]
+        g: gt.Graph, currpath: list[int], branchpaths: list[list[int]]
     ) -> list[list[int]]:
         v = currpath[-1]
 
@@ -251,7 +251,7 @@ def all_paths(g: gt.Graph, verbose: bool = True) -> list[list[int]]:
 
 def random_removal(g: gt.Graph) -> Generator[gt.Graph, None, None]:
     perm = np.random.permutation(np.arange(len(g.get_edges())))
-    mask = np.ones((len(perm),), dtype=np.bool)
+    mask = np.ones((len(perm),), dtype=bool)
 
     # return the full graph first
     g.set_edge_filter(None)

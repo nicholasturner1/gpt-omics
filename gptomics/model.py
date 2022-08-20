@@ -186,23 +186,19 @@ class GPTNeo_HF(Model):
     def mlp_bias_out(self, block: int, factored: bool = False) -> ParamMatrix:
         return self.maybe_factor(factored, gptneo.mlp_bias_out(self.model, block))
 
-    def ln_weights(
-        self, block: int, factored: bool = False
-    ) -> tuple[ParamMatrix, ParamMatrix]:
+    def ln_weights(self, block: int, factored: bool = False) -> list[ParamMatrix]:
         weights = gptneo.ln_weights(self.model, block)
-        return (
+        return [
             self.maybe_factor(factored, weights[0]),
             self.maybe_factor(factored, weights[1]),
-        )
+        ]
 
-    def ln_biases(
-        self, block: int, factored: bool = False
-    ) -> tuple[ParamMatrix, ParamMatrix]:
+    def ln_biases(self, block: int, factored: bool = False) -> list[ParamMatrix]:
         biases = gptneo.ln_biases(self.model, block)
-        return (
+        return [
             self.maybe_factor(factored, biases[0]),
             self.maybe_factor(factored, biases[1]),
-        )
+        ]
 
     @property
     def num_blocks(self) -> int:
@@ -355,26 +351,22 @@ class GPTJ(CachedFileModel):
         return self.maybe_factor(factored, M)
 
     @lru_cache(maxsize=CACHESIZE)
-    def ln_weights(  # type: ignore[override]
-        self, block: int, factored: bool = True
-    ) -> ParamMatrix:
+    def ln_weights(self, block: int, factored: bool = True) -> list[ParamMatrix]:
         assert block < self.config.n_layer, f"block #{block} does not exist"
 
-        # only one bias for GPT-J since att and mlp applied in parallel
+        # only one LN for GPT-J since att and mlp applied in parallel
         bias = self.fetch_tensor(f"transformer.h.{block}.ln_1.weight")
 
-        return self.maybe_factor(factored, bias)
+        return [self.maybe_factor(factored, bias)]
 
     @lru_cache(maxsize=CACHESIZE)
-    def ln_biases(  # type: ignore[override]
-        self, block: int, factored: bool = True
-    ) -> ParamMatrix:
+    def ln_biases(self, block: int, factored: bool = True) -> list[ParamMatrix]:
         assert block < self.config.n_layer, f"block #{block} does not exist"
 
-        # only one bias for GPT-J since att and mlp applied in parallel
+        # only one LN for GPT-J since att and mlp applied in parallel
         bias = self.fetch_tensor(f"transformer.h.{block}.ln_1.bias")
 
-        return self.maybe_factor(factored, bias)
+        return [self.maybe_factor(factored, bias)]
 
     @property
     def num_blocks(self) -> int:

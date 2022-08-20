@@ -1,11 +1,13 @@
 """Functions that actually run the network for simple tasks."""
+from typing import Union
+
 import torch
 import transformers
 from torch import nn
 from torch.nn import functional as F
 
 from . import gptneo, composition as comp
-from .model import Model, Layer, SelfAttention, MLP, LayerNorm
+from .model import GPTNeo_HF, Model, Layer, SelfAttention, MLP, LayerNorm
 
 
 def direct_input_effect(
@@ -24,8 +26,11 @@ def direct_input_effect(
 
     This tests composition values for the proper input/output pair.
     """
-    results = dict()
+    results: dict[str, torch.Tensor] = dict()
     handles = list()
+
+    if not isinstance(model, GPTNeo_HF):
+        raise NotImplementedError("not implemented for models other than GPTNeo_HF")
 
     config = model.model.config
 
@@ -90,17 +95,19 @@ def is_layer_match(
 
 def register_standardize_output(
     module: nn.Module, src_type: str, src_index: int = 0, head_dim: int = 0
-) -> None:
+) -> torch.utils.hooks.RemovableHandle:
     def standardize_output_hook(
         mod: nn.Module,
         input: torch.Tensor,
         output: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Union[torch.Tensor, tuple[torch.Tensor, ...]]:
 
         if src_type == "layernorm_bias":
+            assert isinstance(mod.bias, torch.Tensor)
             return mod.bias.view(1, 1, -1)
 
         elif src_type == "att_head":
+            assert isinstance(mod.attention, nn.Module)
             # usual matrix order is transposed here
             OV = gptneo.module_ov(mod.attention, src_index, head_dim).T
 
@@ -109,14 +116,21 @@ def register_standardize_output(
 
         elif src_type == "att_bias":
             # attention layer outputs need to be a tuple
+            assert isinstance(mod.attention, nn.Module)
+            assert isinstance(mod.attention.out_proj, nn.Module)
+            assert isinstance(mod.attention.out_proj.bias, torch.Tensor)
             return (mod.attention.out_proj.bias.view(1, 1, -1),)
 
         elif src_type == "mlp_weight":
+            assert isinstance(mod.c_proj, nn.Module)
+            assert isinstance(mod.c_proj.weight, torch.Tensor)
             mlp_weight = mod.c_proj.weight
 
             return mlp_weight.view((1,) + mlp_weight.shape)
 
         elif src_type == "mlp_bias":
+            assert isinstance(mod.c_proj, nn.Module)
+            assert isinstance(mod.c_proj.bias, torch.Tensor)
             return mod.c_proj.bias.view(1, 1, -1)
 
         elif src_type == "zero":  # sanity check
@@ -128,7 +142,7 @@ def register_standardize_output(
         else:
             raise ValueError(f"unrecognized src_type {src_type}")
 
-    return module.register_forward_hook(standardize_output_hook)
+    return module.register_forward_hook(standardize_output_hook)  # type: ignore
 
 
 def register_record_input(
@@ -138,22 +152,40 @@ def register_record_input(
     dst_index: int = 0,
     head_dim: int = 0,
     denom: str = "none",
-) -> None:
+) -> torch.utils.hooks.RemovableHandle:
     def record_input_hook(mod: nn.Module, input: torch.Tensor) -> None:
         if term_type == "Q":
+            assert isinstance(mod.attention, nn.Module)
             QK = gptneo.module_qk(mod.attention, dst_index, head_dim)
-            result = input[0] @ QK / comp.compute_denom(input[0], QK, denom)
+            result = (
+                input[0]
+                @ QK
+                / comp.compute_denom(input[0].data.numpy(), QK.data.numpy(), denom)
+            )
         elif term_type == "K":
+            assert isinstance(mod.attention, nn.Module)
             QK = gptneo.module_qk(mod.attention, dst_index, head_dim)
-            result = input[0] @ QK.T / comp.compute_denom(input[0], QK.T, denom)
+            result = (
+                input[0]
+                @ QK.T
+                / comp.compute_denom(input[0].data.numpy(), QK.T.data.numpy(), denom)
+            )
         elif term_type == "V":
+            assert isinstance(mod.attention, nn.Module)
             OV = gptneo.module_ov(mod.attention, dst_index, head_dim)
-            result = input[0] @ OV.T / comp.compute_denom(input[0], OV.T, denom)
+            result = (
+                input[0]
+                @ OV.T
+                / comp.compute_denom(input[0].data.numpy(), OV.T.data.numpy(), denom)
+            )
 
         elif term_type == "mlp_weight":
+            assert isinstance(mod.c_fc, nn.Module)
+            assert isinstance(mod.c_fc.weight, torch.Tensor)
+            assert isinstance(mod.c_fc.bias, torch.Tensor)
             result = F.linear(
                 input, mod.c_fc.weight, torch.zeros_like(mod.c_fc.bias)
-            ) / comp.compute_denom(input, mod.c_fc.weight)
+            ) / comp.compute_denom(input.data.numpy(), mod.c_fc.weight.data.numpy())
 
         results[term_type] = result
 
@@ -166,8 +198,8 @@ def subtract_bias_hook(
     return output - module.bias
 
 
-def register_remove_bias(module: nn.Module) -> None:
-    return module.register_forward_hook(subtract_bias_hook)
+def register_remove_bias(module: nn.Module) -> torch.utils.hooks.RemovableHandle:
+    return module.register_forward_hook(subtract_bias_hook)  # type: ignore
 
 
 def zero_output_hook(
@@ -183,5 +215,5 @@ def zero_output_hook(
     return output
 
 
-def register_zero_output(module: nn.Module) -> None:
-    return module.register_forward_hook(zero_output_hook)
+def register_zero_output(module: nn.Module) -> torch.utils.hooks.RemovableHandle:
+    return module.register_forward_hook(zero_output_hook)  # type: ignore
