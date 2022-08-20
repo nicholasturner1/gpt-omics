@@ -27,14 +27,13 @@ repos:
         language: system
         types: [python]
 
-# Cutting this hook until we start polishing the repo
-#- repo: local
-#  hooks:
-#  - id: mypy
-#    name: mypy
-#    entry: mypy
-#    language: system
-#    types: [python]
-#    args:
-#    -   "--ignore-missing-imports"
-#    -   "--show-error-codes"
+- repo: local
+  hooks:
+  - id: mypy
+    name: mypy
+    entry: mypy
+    language: system
+    types: [python]
+    args:
+    -   "--ignore-missing-imports"
+    -   "--show-error-codes"
