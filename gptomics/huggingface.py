@@ -1,7 +1,7 @@
 """Functions for extracting useful information from GPT-Neo HuggingFace models.
 
-These functions are slower than running the actual model, but offer flexibility
-for analysis.
+The functions to simulate the network are obv slower than running the actual model,
+but they offer flexibility for analysis.
 """
 from __future__ import annotations
 

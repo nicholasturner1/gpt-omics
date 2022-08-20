@@ -6,7 +6,7 @@ import transformers
 from torch import nn
 from torch.nn import functional as F
 
-from . import gptneo, composition as comp
+from . import huggingface, composition as comp
 from .model import GPTNeo_HF, Model, Layer, SelfAttention, MLP, LayerNorm
 
 
@@ -109,7 +109,7 @@ def register_standardize_output(
         elif src_type == "att_head":
             assert isinstance(mod.attention, nn.Module)
             # usual matrix order is transposed here
-            OV = gptneo.module_ov(mod.attention, src_index, head_dim).T
+            OV = huggingface.module_ov(mod.attention, src_index, head_dim).T
 
             # attention layer outputs need to be a tuple
             return (OV.view((1,) + OV.shape),)
@@ -156,7 +156,7 @@ def register_record_input(
     def record_input_hook(mod: nn.Module, input: torch.Tensor) -> None:
         if term_type == "Q":
             assert isinstance(mod.attention, nn.Module)
-            QK = gptneo.module_qk(mod.attention, dst_index, head_dim)
+            QK = huggingface.module_qk(mod.attention, dst_index, head_dim)
             result = (
                 input[0]
                 @ QK
@@ -164,7 +164,7 @@ def register_record_input(
             )
         elif term_type == "K":
             assert isinstance(mod.attention, nn.Module)
-            QK = gptneo.module_qk(mod.attention, dst_index, head_dim)
+            QK = huggingface.module_qk(mod.attention, dst_index, head_dim)
             result = (
                 input[0]
                 @ QK.T
@@ -172,7 +172,7 @@ def register_record_input(
             )
         elif term_type == "V":
             assert isinstance(mod.attention, nn.Module)
-            OV = gptneo.module_ov(mod.attention, dst_index, head_dim)
+            OV = huggingface.module_ov(mod.attention, dst_index, head_dim)
             result = (
                 input[0]
                 @ OV.T

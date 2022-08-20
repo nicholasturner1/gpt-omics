@@ -14,7 +14,7 @@ import numpy as np
 
 from .svd import SVD
 from .types import ParamMatrix
-from . import transformersio, gptneo, torchio
+from . import transformersio, huggingface, torchio
 
 
 CACHESIZE = 16
@@ -172,29 +172,29 @@ class GPTNeo_HF(Model):
         return self.maybe_factor(factored, Oh, Vh)
 
     def out_bias(self, block: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.out_bias(self.model, block))
+        return self.maybe_factor(factored, huggingface.out_bias(self.model, block))
 
     def mlp_in(self, block: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_in(self.model, block))
+        return self.maybe_factor(factored, huggingface.mlp_in(self.model, block))
 
     def mlp_out(self, block: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_out(self.model, block))
+        return self.maybe_factor(factored, huggingface.mlp_out(self.model, block))
 
     def mlp_bias_in(self, block: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_bias_in(self.model, block))
+        return self.maybe_factor(factored, huggingface.mlp_bias_in(self.model, block))
 
     def mlp_bias_out(self, block: int, factored: bool = False) -> ParamMatrix:
-        return self.maybe_factor(factored, gptneo.mlp_bias_out(self.model, block))
+        return self.maybe_factor(factored, huggingface.mlp_bias_out(self.model, block))
 
     def ln_weights(self, block: int, factored: bool = False) -> list[ParamMatrix]:
-        weights = gptneo.ln_weights(self.model, block)
+        weights = huggingface.ln_weights(self.model, block)
         return [
             self.maybe_factor(factored, weights[0]),
             self.maybe_factor(factored, weights[1]),
         ]
 
     def ln_biases(self, block: int, factored: bool = False) -> list[ParamMatrix]:
-        biases = gptneo.ln_biases(self.model, block)
+        biases = huggingface.ln_biases(self.model, block)
         return [
             self.maybe_factor(factored, biases[0]),
             self.maybe_factor(factored, biases[1]),
