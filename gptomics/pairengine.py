@@ -2,6 +2,8 @@
 
 Writes a pandas csv as output where each row specifies a single composition term.
 """
+from __future__ import annotations
+
 import time
 import argparse
 import itertools

@@ -1,4 +1,6 @@
 """Functions that actually run the network for simple tasks."""
+from __future__ import annotations
+
 from typing import Union
 
 import torch
