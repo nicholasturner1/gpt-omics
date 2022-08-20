@@ -175,7 +175,7 @@ def init_baseline_dist(
     dest_shape: tuple[int, int],
     num_samples: int = 100,
     init_weight: bool = False,
-    wikidenom: bool = True,
+    denom: str = "wiki",
     sample_rank: Optional[int] = None,
 ) -> np.ndarray:
     """Baseline composition terms from randomly-initialized weight matrices."""
@@ -204,6 +204,6 @@ def init_baseline_dist(
             newmat2 = dist.rsample((sample_rank, dest_shape[1])).numpy()
             newmat = newmat1 @ newmat2
 
-        terms[i] = basecomposition(weight, newmat, center=False, wikidenom=wikidenom)
+        terms[i] = basecomposition(weight, newmat, center=False, denom=denom)
 
     return terms
