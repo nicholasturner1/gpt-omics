@@ -7,9 +7,36 @@ import torch
 import transformers
 from torch import nn
 from torch.nn import functional as F
+from transformers import AutoTokenizer
 
-from . import huggingface, composition as comp
+from . import huggingface, transformersio, composition as comp
 from .model import GPTNeo_HF, Model, Layer, SelfAttention, MLP, LayerNorm
+
+
+def attention_pattern(
+    modelname: str,
+    prompt: str,
+    cuda: bool = True,
+) -> tuple[transformers.modeling_outputs.CausalLMOutputWithPast, list[str]]:
+    """Runs a forward pass and returns the attention pattern.
+
+    Also returns the tokenized outputs for reference.
+    """
+
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
+
+    if cuda:
+        model = model.cuda()
+        input_ids = input_ids.cuda()
+
+    # run inference
+    with torch.no_grad():
+        outputs = model(input_ids=input_ids, output_attentions=True)
+
+    return outputs.attentions, tokens
 
 
 def direct_input_effect(
