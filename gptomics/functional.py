@@ -17,7 +17,7 @@ def attention_pattern(
     modelname: str,
     prompt: str,
     cuda: bool = True,
-) -> tuple[transformers.modeling_outputs.CausalLMOutputWithPast, list[str]]:
+) -> tuple[tuple[torch.Tensor, ...], list[str]]:
     """Runs a forward pass and returns the attention pattern.
 
     Also returns the tokenized outputs for reference.
@@ -38,6 +38,59 @@ def attention_pattern(
 
     return outputs.attentions, tokens
 
+def logit_attribution(
+    modelname: str,
+    prompt: str,
+    cuda: bool = True,
+) -> tuple[tuple[torch.Tensor, ...], list[str]]:
+    """Runs a forward pass and returns the logit attributions for a token, for an attention head.
+    """
+    
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
+    
+
+    if cuda:
+        model = model.cuda()
+        input_ids = input_ids.cuda()
+        
+    with torch.no_grad():
+        outputs = model(input_ids=input_ids)
+
+    def get_logit_attr(attn_layer, hidden_states, output):
+        
+        attn_mat = output[2]
+        values = attn_layer.v_proj(hidden_states)
+        
+
+        blocks = model.transformer.h
+        for (i, block) in enumerate(blocks):
+            module = block.attn
+            for row in range(module.shape[0]):
+                result[...,row] = module[row] * hidden_states[0].T
+            
+            result = result.reshape(768,36)
+
+            out = torch.matmul(module.out_proj.weight, result)
+            
+            unembedded = torch.matmul(model.lm_head.weight, out)
+            
+            mean = unembedded.mean(0).reshape(6,6)
+
+            final = unembedded.reshape(-1,6,6) - mean
+            
+
+    config = model.config
+
+    head_dim = config.hidden_size // config.num_heads
+
+        
+        
+
+    return outputs
+        
 
 def direct_input_effect(
     model: Model,
