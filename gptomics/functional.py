@@ -39,65 +39,6 @@ def attention_pattern(
 
     return outputs.attentions, tokens
 
-# TODO: Vectorize this
-# TODO: Make this not need to load a model for each head when called inside total_attribution
-def logit_attribution(
-    modelname: str,
-    prompt: str,
-    block_index: int,
-    head_index: int,
-    cuda: bool = True,
-) -> tuple[tuple[torch.Tensor, ...], list[str]]:
-    """Runs a forward pass and returns the logit attributions for all tokens, for an attention head.
-    """
-    
-    model = transformersio.load_model(modelname)
-    tokenizer = AutoTokenizer.from_pretrained(modelname)
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-    tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
-    num_tokens = len(tokens)
-    
-    if cuda:
-        model = model.cuda()
-        input_ids = input_ids.cuda()
-
-    logits = []
-
-    config = model.config
-
-    head_dim = config.hidden_size // config.num_heads
-
-    def get_logit_attr(attn_layer, hidden_states, output):
-        
-        attn_mat = output[2]
-        print(type(hidden_states))
-        values = attn_layer.v_proj(hidden_states[0])[0,:, head_index * head_dim:(head_index+1) * head_dim]
-        print(f"values is {values.shape}")
-        
-        result = torch.zeros ((head_dim,num_tokens,num_tokens))
-        print(f"attn_mat is {attn_mat.shape}")
-        for row in range(attn_mat.shape[2]):
-            result[...,row] = attn_mat[0, head_index, row] * values.T
-        
-        result = result.reshape(head_dim,num_tokens*num_tokens)
-
-        out = torch.matmul(attn_layer.out_proj.weight[:, head_index * head_dim:(head_index+1) * head_dim], result)
-        
-        unembedded = torch.matmul(model.lm_head.weight, out)
-        
-        mean = unembedded.mean(0).reshape(num_tokens,num_tokens)
-
-        logits.append(unembedded.reshape(-1,num_tokens,num_tokens) - mean)
-    
-    handle = model.transformer.h[block_index].attn.attention.register_forward_hook(get_logit_attr)
-        
-    with torch.no_grad():
-        outputs = model(input_ids=input_ids, output_attentions=True)
-        
-    handle.remove()
-        
-    return logits[0]
-
 def total_attribution (
     modelname : str,
     prompt : str,
