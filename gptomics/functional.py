@@ -6,7 +6,7 @@ from typing import Union
 
 import torch
 import transformers
-from torch import nn
+from torch import logit, nn
 from torch.nn import functional as F
 from transformers import AutoTokenizer
 
@@ -39,63 +39,98 @@ def attention_pattern(
 
     return outputs.attentions, tokens
 
-# TODO: Vectorize this
-def logit_attribution(
-    modelname: str,
-    prompt: str,
-    block_index: int,
-    head_index: int,
-    cuda: bool = True,
+def total_attribution (
+    modelname : str,
+    prompt : str,
+    cuda : bool = True,
 ) -> tuple[tuple[torch.Tensor, ...], list[str]]:
-    """Runs a forward pass and returns the logit attributions for a token, for an attention head.
+    """Runs a forward pass and returns the logit attributions for all tokens in the prompt for all heads in the model.
     """
     
     model = transformersio.load_model(modelname)
     tokenizer = AutoTokenizer.from_pretrained(modelname)
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    input_ids = tokenizer(prompt, return_tensors = "pt").input_ids
     tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
     num_tokens = len(tokens)
-    
-    if cuda:
-        model = model.cuda()
-        input_ids = input_ids.cuda()
-
-    logits = []
 
     config = model.config
 
-    head_dim = config.hidden_size // config.num_heads
+    if cuda:
+        model = model.cuda()
+        input_ids = input_ids.cuda()
+    # TODO: Vectorize this
+    def logit_attribution(
+        block_index: int,
+        head_index: int,
+    ) -> tuple[tuple[torch.Tensor, ...], list[str]]:
+        """Runs a forward pass and returns the logit attributions for all tokens, for an attention head.
+        """
+        
+        logits = []
 
-    def get_logit_attr(attn_layer, hidden_states, output):
-        
-        attn_mat = output[2]
-        print(type(hidden_states))
-        values = attn_layer.v_proj(hidden_states[0])[0,:, head_index * head_dim:(head_index+1) * head_dim]
-        print(f"values is {values.shape}")
-        
-        result = torch.zeros ((head_dim,num_tokens,num_tokens))
-        print(f"attn_mat is {attn_mat.shape}")
-        for row in range(attn_mat.shape[2]):
-            result[...,row] = attn_mat[0, head_index, row] * values.T
-        
-        result = result.reshape(head_dim,num_tokens*num_tokens)
 
-        out = torch.matmul(attn_layer.out_proj.weight[:, head_index * head_dim:(head_index+1) * head_dim], result)
-        
-        unembedded = torch.matmul(model.lm_head.weight, out)
-        
-        mean = unembedded.mean(0).reshape(num_tokens,num_tokens)
+        head_dim = config.hidden_size // config.num_heads
 
-        logits.append(unembedded.reshape(-1,num_tokens,num_tokens) - mean)
-    
-    handle = model.transformer.h[block_index].attn.attention.register_forward_hook(get_logit_attr)
+        def get_logit_attr(attn_layer, hidden_states, output):
+            
+            attn_mat = output[2]
+            print(type(hidden_states))
+            values = attn_layer.v_proj(hidden_states[0])[0,:, head_index * head_dim:(head_index+1) * head_dim]
+            print(f"values is {values.shape}")
+            
+            result = torch.zeros ((head_dim,num_tokens,num_tokens))
+            print(f"attn_mat is {attn_mat.shape}")
+            for row in range(attn_mat.shape[2]):
+                result[...,row] = attn_mat[0, head_index, row] * values.T
+            
+            result = result.reshape(head_dim,num_tokens*num_tokens)
+
+            out = torch.matmul(attn_layer.out_proj.weight[:, head_index * head_dim:(head_index+1) * head_dim], result)
+            
+            unembedded = torch.matmul(model.lm_head.weight, out)
+            
+            mean = unembedded.mean(0).reshape(num_tokens,num_tokens)
+
+            logits.append(unembedded.reshape(-1,num_tokens,num_tokens) - mean)
         
-    with torch.no_grad():
-        outputs = model(input_ids=input_ids, output_attentions=True)
+        handle = model.transformer.h[block_index].attn.attention.register_forward_hook(get_logit_attr)
+            
+        with torch.no_grad():
+            outputs = model(input_ids=input_ids, output_attentions=True)
+            
+        handle.remove()
+            
+        return logits[0]
         
-    handle.remove()
+    blocks = list(range(0, config.num_layers)) 
+    heads = list(range(0, config.num_heads))
+    # Can we dynamically retrieve the vocab size (50257)?
+    attributions = torch.zeros ((config.num_layers, config.num_heads, 50257, num_tokens, num_tokens ))
+    # Need to iterate over all blocks, and over all heads in each block 
+    for block in blocks:
+        for head in heads: 
+            attributions[block,head] = logit_attribution(block, head)
+
+    # Iterate through tokens, find indices of tokens, grab attributions for all heads at token indices, grab column for all heads at token index in prompt (should be another blocks x heads tensor for each token in prompt)
+    prompt_attributions = torch.zeros((config.num_layers, config.num_heads, num_tokens, num_tokens))    
+    for prompt_index in range(num_tokens):
+        # Find token index in dictionary
+        token_attribution_index = input_ids[::, prompt_index]
         
-    return logits[0]
+        # Get the logit attributions at this token_attribution_index
+        intermediary = attributions[::,::,token_attribution_index]
+
+        # Get the columns corresponding to the token index within the prompt
+        intermediary = torch.squeeze(intermediary)[::,::,::,prompt_index]
+        print(intermediary)
+        
+        # If this still contains all the data for blocks and heads, this is the final vector
+        print(f"prompt_attributions {prompt_attributions.shape}")
+        print(f"intermediary {intermediary.shape}")
+        prompt_attributions[::,::,::,prompt_index] = intermediary
+
+    # blocks x heads x tokens x columns (should the last two be swapped?)
+    return prompt_attributions
 
 def direct_input_effect(
     model: Model,
