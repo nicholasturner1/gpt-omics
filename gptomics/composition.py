@@ -1,67 +1,63 @@
 """Computing [QKV] contribution/composition terms."""
 from __future__ import annotations
 
+import math
 from typing import Union, Optional
 
 import torch
-import numpy as np
 from tqdm import tqdm
 
 from .svd import SVD
 from .types import ParamMatrix
 
 
-def frobnorm(M: Union[np.ndarray, SVD]) -> np.float32:
+def frobnorm(M: Union[torch.Tensor, SVD]) -> float:
     """Frobenius norm."""
-    if isinstance(M, np.ndarray):
-        return np.linalg.norm(M.ravel())
+    if isinstance(M, torch.Tensor):
+        return torch.linalg.norm(M.ravel()).item()
     elif isinstance(M, SVD):
-        return np.linalg.norm(M.S)
-    elif isinstance(M, torch.Tensor):
-        return M.norm()
+        return torch.linalg.norm(M.S).item()
     else:
         raise ValueError(f"unexpected type {type(M)}")
 
 
-def singularvals(M: Union[np.ndarray, SVD]) -> np.ndarray:
+def singularvals(M: Union[torch.Tensor, SVD]) -> torch.Tensor:
     """Singular values."""
-    if isinstance(M, np.ndarray):
-        return np.linalg.svd(M, full_matrices=False)[1]
+    if isinstance(M, torch.Tensor):
+        return SVD.frommatrix(M).S
     elif isinstance(M, SVD):
         return M.S
-    elif isinstance(M, torch.Tensor):
-        return np.linalg.svd(M.detach().numpy(), full_matrices=False)[1]
     else:
         raise ValueError(f"unexpected type {type(M)}")
 
 
-def removemean(M: Union[np.ndarray, SVD], method="direct") -> Union[np.ndarray, SVD]:
+def removemean(
+    M: Union[torch.Tensor, SVD], method="direct"
+) -> Union[torch.Tensor, SVD]:
     """Removes the mean from each column of a given matrix/vector."""
     if method == "direct":
         assert isinstance(
-            M, np.ndarray
-        ), "direct method only implemented for np.ndarray"
+            M, torch.Tensor
+        ), "direct method only implemented for torch.Tensor"
         return M - M.mean(0)
 
     # less direct, more fun, works with svd.SVD objects
     elif method == "matrix multiply":
         n = M.shape[0]
-        E = np.eye(n, dtype=M.dtype) - 1 / n
+        E = torch.eye(n, dtype=M.dtype, device=M.device) - 1 / n
 
-        # transposes ensure that M's __matmul__ method is called
-        # this helps to support svd.SVD objects
-        return (M.T @ E).T
+        return E @ M
 
     else:
         raise ValueError(f"unrecognized method: {method}")
 
 
 def basecomposition(
-    dst_M: Union[np.ndarray, SVD],
-    src_M: Union[np.ndarray, SVD],
+    dst_M: Union[torch.Tensor, SVD],
+    src_M: Union[torch.Tensor, SVD],
     center: bool = True,
     denom: str = "wiki",
-) -> np.float32:
+) -> float:
     """Computes composition assuming that the matrices are properly transposed."""
     if center:
         src_M = removemean(src_M)
@@ -72,9 +68,7 @@ def basecomposition(
     return numerator / denominator
 
 
-def compute_denom(
-    dst_M: ParamMatrix, src_M: ParamMatrix, denom: str = "wiki"
-) -> np.float32:
+def compute_denom(dst_M: ParamMatrix, src_M: ParamMatrix, denom: str = "wiki") -> float:
     if denom == "orig":
         denominator = frobnorm(dst_M) * frobnorm(src_M)
 
@@ -90,7 +84,7 @@ def compute_denom(
         denominator = frobnorm(d1 * d2)
 
     elif denom == "none" or denom == "one":
-        denominator = np.float32(1.0)
+        denominator = 1.0
 
     elif denom == "dst_orig":
         denominator = frobnorm(dst_M)
@@ -112,22 +106,23 @@ def compute_denom(
     return denominator
 
 
-def zeropad(v: np.ndarray, newlen: int):
+def zeropad(v: torch.Tensor, newlen: int):
+    """Pads the end of a vector with zeros for elementwise multiplication."""
     assert len(v) <= newlen, f"cannot zeropad to a smaller length {len(v)}->{newlen}"
 
-    newv = np.zeros((newlen,), dtype=v.dtype)
+    newv = torch.zeros((newlen,), dtype=v.dtype, device=v.device)
     newv[: len(v)] = v[:]
 
     return newv
 
 
 def composition_singularvals(
-    dst_M: Union[np.ndarray, SVD],
-    src_M: Union[np.ndarray, SVD],
+    dst_M: Union[torch.Tensor, SVD],
+    src_M: Union[torch.Tensor, SVD],
     center: bool = True,
     normalize: bool = True,
     wikidenom: bool = False,
-) -> np.ndarray:
+) -> torch.Tensor:
     """Computes the singular values from composition (but doesn't collapse them)."""
     if center:
         src_M = removemean(src_M)
@@ -137,35 +132,35 @@ def composition_singularvals(
     if normalize and not wikidenom:
         values /= frobnorm(dst_M) * frobnorm(src_M)
     elif normalize:
-        values /= np.linalg.norm(singularvals(dst_M) * singularvals(src_M))
+        values /= torch.linalg.norm(singularvals(dst_M) * singularvals(src_M))
 
     return values
 
 
 def Qcomposition(
-    dst_QK: np.ndarray, src_OV: np.ndarray, center: bool = True
-) -> np.float32:
+    dst_QK: torch.Tensor, src_OV: torch.Tensor, center: bool = True
+) -> float:
     """Computes Q composition."""
     return basecomposition(dst_QK.T, src_OV, center=center)
 
 
 def Kcomposition(
-    dst_QK: np.ndarray, src_OV: np.ndarray, center: bool = True
-) -> np.float32:
+    dst_QK: torch.Tensor, src_OV: torch.Tensor, center: bool = True
+) -> float:
     """Computes K composition."""
     return basecomposition(dst_QK, src_OV, center=center)
 
 
 def Vcomposition(
-    dst_OV: np.ndarray, src_OV: np.ndarray, center: bool = True
-) -> np.float32:
+    dst_OV: torch.Tensor, src_OV: torch.Tensor, center: bool = True
+) -> float:
     """Computes V composition."""
     return basecomposition(dst_OV, src_OV, center=center)
 
 
 def MLP_in_contribution(
-    dst_MLPin: np.ndarray, src_OV: np.ndarray, center: bool = True
-) -> np.float32:
+    dst_MLPin: torch.Tensor, src_OV: torch.Tensor, center: bool = True
+) -> float:
     """Computes contribution to the MLP hidden layer."""
     return basecomposition(dst_MLPin, src_OV, center=center)
 
@@ -177,11 +172,11 @@ def init_baseline_dist(
     init_weight: bool = False,
     denom: str = "wiki",
     sample_rank: Optional[int] = None,
-) -> np.ndarray:
+) -> torch.Tensor:
     """Baseline composition terms from randomly-initialized weight matrices."""
 
     # xavier uniform by default to match unseal
-    alpha = np.sqrt(6 / (weight.shape[0] + weight.shape[1]))
+    alpha = math.sqrt(6 / (weight.shape[0] + weight.shape[1]))
     dist = torch.distributions.Uniform(-alpha, alpha)
 
     if init_weight:
@@ -193,7 +188,7 @@ def init_baseline_dist(
 
             weight = weight1 @ weight2
 
-    terms = np.empty((num_samples,), dtype=np.float32)
+    terms = torch.empty((num_samples,), dtype=torch.float32)
     for i in tqdm(range(num_samples)):
 
         # sampling a random matrix

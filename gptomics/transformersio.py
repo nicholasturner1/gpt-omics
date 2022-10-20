@@ -1,6 +1,8 @@
 """Some utility functions for working with HuggingFace transformers models."""
 from __future__ import annotations
 
+from typing import Optional
+
 import torch
 from transformers import GPTNeoForCausalLM, AutoModelForCausalLM
 
@@ -23,8 +25,16 @@ def no_init(loading_code):
     return result
 
 
-def load_model(modelname: str) -> GPTNeoForCausalLM:
+def load_model(
+    modelname: str, device: Optional[torch.device] = None
+) -> GPTNeoForCausalLM:
     def load():
         return AutoModelForCausalLM.from_pretrained(modelname, low_cpu_mem_usage=True)
 
-    return no_init(load)
+    model = no_init(load)
+    model.requires_grad_(False)
+
+    if device:
+        model = model.to(device)
+
+    return model
