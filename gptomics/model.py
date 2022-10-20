@@ -7,13 +7,14 @@ Models are designed to achieve two functions:
 from __future__ import annotations
 
 import json
+from typing import Optional
 from functools import lru_cache
 from types import SimpleNamespace
 
-import numpy as np
+import torch
 
 from .svd import SVD
-from .types import ParamMatrix
+from .types import ParamMatrix  # Union[torch.Tensor, SVD]
 from . import transformersio, huggingface, torchio
 
 
@@ -57,8 +58,8 @@ class LayerNorm(Layer):
 class Model:
     """Model virtual class."""
 
-    def __init__(self, gpu_svd: bool = False):
-        self.gpu_svd = gpu_svd
+    def __init__(self):
+        pass
 
     def qk(self, block: int, head: int, factored: bool = False) -> ParamMatrix:
         """Extracts the QK matrix from a model."""
@@ -104,10 +105,13 @@ class Model:
     def num_heads(self) -> int:
         raise NotImplementedError
 
-    def maybe_factor(self, factor: bool = True, *Ms: np.ndarray) -> ParamMatrix:
-        """Factors the matrix using an SVD if desired."""
+    def maybe_factor(self, factor: bool = True, *Ms: torch.Tensor) -> ParamMatrix:
+        """Factors the matrix using an SVD if desired.
+
+        Also multiplies additional arguments (suitably factored) into the result.
+        """
         if factor:
-            return SVD.frommatrices(*Ms, gpu=self.gpu_svd)
+            return SVD.frommatrices(*Ms)
         else:
             base = Ms[0]
 
@@ -134,10 +138,9 @@ class Model:
 class GPTNeo_HF(Model):
     """GPT-Neo through HuggingFace transformers."""
 
-    def __init__(self, modelname: str, gpu_svd: bool = False):
+    def __init__(self, modelname: str, device: Optional[torch.device] = None):
         super().__init__()
-        self.model = transformersio.load_model(modelname)
-        self.gpu_svd = gpu_svd
+        self.model = transformersio.load_model(modelname, device)
 
     def qk(self, block: int, head: int, factored: bool = False) -> ParamMatrix:
         config = self.model.config
@@ -147,8 +150,8 @@ class GPTNeo_HF(Model):
         assert block < config.num_layers
 
         attention = self.model.transformer.h[block].attn.attention
-        Q = attention.q_proj.weight.data.numpy()
-        K = attention.k_proj.weight.data.numpy()
+        Q = attention.q_proj.weight
+        K = attention.k_proj.weight
 
         Qh = Q[head * head_dim : (head + 1) * head_dim, :]
         Kh = K[head * head_dim : (head + 1) * head_dim, :]
@@ -163,8 +166,8 @@ class GPTNeo_HF(Model):
         assert block < config.num_layers
 
         attention = self.model.transformer.h[block].attn.attention
-        O = attention.out_proj.weight.data.numpy()
-        V = attention.v_proj.weight.data.numpy()
+        O = attention.out_proj.weight
+        V = attention.v_proj.weight
 
         Oh = O[:, head * head_dim : (head + 1) * head_dim]
         Vh = V[head * head_dim : (head + 1) * head_dim, :]
@@ -251,20 +254,26 @@ class CachedFileModel(Model):
     """
 
     def __init__(
-        self, config_filename: str, param_filename: str, gpu_svd: bool = False
+        self,
+        config_filename: str,
+        param_filename: str,
+        device: Optional[torch.device] = None,
     ):
         self.config = self.read_config(config_filename)
         self.param_filename = param_filename
         self.tensor_names = torchio.read_tensor_names(param_filename)
-        self.gpu_svd = gpu_svd
+        self.device = device
 
     @lru_cache(maxsize=50)
-    def fetch_tensor(self, tensorname: str) -> np.ndarray:
+    def fetch_tensor(self, tensorname: str) -> torch.Tensor:
         """Fetches a tensor from disk and caches it."""
         assert tensorname in self.tensor_names, f"tensor {tensorname} not found"
         tensor = torchio.read_tensor(self.param_filename, tensorname)
 
-        return tensor.data.numpy()
+        if self.device:
+            tensor = tensor.to(self.device)
+
+        return tensor
 
     def read_config(self, filename: str) -> SimpleNamespace:
         """Reads a config json file."""
@@ -519,10 +528,10 @@ class GPTNeo(CachedFileModel, GPTNeo_HF):
         return self.config.num_heads
 
 
-def model_by_name(modelname: str, gpu_svd: bool = False):
+def model_by_name(modelname: str, device: Optional[torch.device] = None):
     """Instantiate Models by simplified names using a default implementation."""
     known_names = ["EleutherAI/gpt-neo-125M"]
     assert modelname in known_names, f"unknown model name: {modelname}"
 
     if modelname == "EleutherAI/gpt-neo-125M":
-        return GPTNeo_HF("EleutherAI/gpt-neo-125M", gpu_svd=gpu_svd)
+        return GPTNeo_HF("EleutherAI/gpt-neo-125M", device=device)

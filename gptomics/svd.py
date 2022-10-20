@@ -4,47 +4,48 @@ from __future__ import annotations
 from typing import Union
 
 import torch
-import numpy as np
 
 
 class SVD:
-    def __init__(self, U: np.ndarray, S: np.ndarray, Vt: np.ndarray):
+    def __init__(self, U: torch.Tensor, S: torch.Tensor, Vt: torch.Tensor):
         self.U = U
         self.S = S
         self.Vt = Vt
 
-    def __matmul__(self, other: Union[SVD, np.ndarray]) -> SVD:
-        if isinstance(other, np.ndarray):
+    def __matmul__(self, other: Union[SVD, torch.Tensor]) -> SVD:
+        if isinstance(other, torch.Tensor):
             other = SVD.frommatrix(other)
 
         # "inner core" of the product, p -> prime
-        Sp = (self.S[:, np.newaxis] * self.Vt) @ (other.U * other.S)
+        Sp = (self.S[:, None] * self.Vt) @ (other.U * other.S)
 
-        Up, Sp, Vtp = np.linalg.svd(Sp, full_matrices=False)
+        Up, Sp, Vtp = torch.linalg.svd(Sp, full_matrices=False)
 
         return SVD(self.U @ Up, Sp, Vtp @ other.Vt)
 
+    def __rmatmul__(self, other: Union[SVD, torch.Tensor]) -> SVD:  # type: ignore
+        if isinstance(other, torch.Tensor):
+            other = SVD.frommatrix(other)
+
+        return other @ self
+
     @classmethod
-    def frommatrix(cls, M: np.ndarray, gpu: bool = False) -> SVD:
+    def frommatrix(cls, M: torch.Tensor) -> SVD:
         if len(M.shape) == 1:
-            norm = np.linalg.norm(M)
+            norm = torch.linalg.norm(M)
             return SVD(
                 (M / norm).reshape(-1, 1),
-                np.array([norm], dtype=M.dtype),
-                np.array([1], dtype=M.dtype).reshape(1, 1),
+                torch.tensor([norm], dtype=M.dtype, device=M.device),
+                torch.tensor([1], dtype=M.dtype, device=M.device).reshape(1, 1),
             )
 
-        if not gpu:
-            U, S, Vt = np.linalg.svd(M, full_matrices=False)
-        else:
-            U, S, Vt = torch.linalg.svd(torch.tensor(M).to("cuda"), full_matrices=False)
-            U, S, Vt = U.cpu().numpy(), S.cpu().numpy(), Vt.cpu().numpy()
+        U, S, Vt = torch.linalg.svd(M, full_matrices=False)
 
         return SVD(U, S, Vt)
 
     @classmethod
-    def frommatrices(cls, *Ms: np.ndarray, gpu: bool = False) -> SVD:
-        svds = [SVD.frommatrix(M, gpu=gpu) for M in Ms]
+    def frommatrices(cls, *Ms: torch.Tensor) -> SVD:
+        svds = [SVD.frommatrix(M) for M in Ms]
 
         if len(svds) == 1:
             return svds[0]
@@ -60,7 +61,7 @@ class SVD:
     def T(self) -> SVD:
         return SVD(self.Vt.T, self.S, self.U.T)
 
-    def full(self) -> np.ndarray:
+    def full(self) -> torch.Tensor:
         return (self.U * self.S) @ self.Vt
 
     def __repr__(self) -> str:
@@ -71,5 +72,9 @@ class SVD:
         return (self.U.shape[0], self.Vt.shape[1])
 
     @property
-    def dtype(self) -> type:
+    def dtype(self) -> torch.dtype:
         return self.U.dtype
+
+    @property
+    def device(self) -> torch.device:
+        return self.U.device
