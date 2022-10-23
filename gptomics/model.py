@@ -246,6 +246,136 @@ class GPTNeo_HF(Model):
             return LayerNorm(1)
 
 
+class GPTJ_HF(Model):
+    """GPT-J through Huggingface transformers."""
+
+    def __init__(self, modelname: str, device: Optional[torch.device] = None):
+        super().__init__()
+        self.model = transformersio.load_model(modelname, device)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def qk(self, block: int, head: int, factored: bool = True) -> ParamMatrix:
+        assert head < self.model.config.n_head, f"head #{head} does not exist"
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        # _f : the "full" set of parameters across heads
+        Qf = self.model.transformer.h[block].attn.q_proj.weight
+        Kf = self.model.transformer.h[block].attn.k_proj.weight
+
+        head_dim = self.model.config.n_embd // self.model.config.n_head
+
+        Q = Qf[head * head_dim : (head + 1) * head_dim, :]
+        K = Kf[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, Q.T, K)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def ov(self, block: int, head: int, factored: bool = True) -> ParamMatrix:
+        assert head < self.model.config.n_head, f"head #{head} does not exist"
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        # _f : the "full" set of parameters across heads
+        Of = self.model.transformer.h[block].attn.out_proj.weight
+        Vf = self.model.transformer.h[block].attn.v_proj.weight
+
+        head_dim = self.model.config.n_embd // self.model.config.n_head
+
+        O = Of[:, head * head_dim : (head + 1) * head_dim]
+        V = Vf[head * head_dim : (head + 1) * head_dim, :]
+
+        return self.maybe_factor(factored, O, V)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def out_bias(self, block: int, factored: bool = True):  # type: ignore[override]
+        return None
+
+    @lru_cache(maxsize=CACHESIZE)
+    def mlp_in(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        M = self.model.transformer.h[block].mlp.fc_in.weight
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def mlp_out(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        M = self.model.transformer.h[block].mlp.fc_out.weight
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def mlp_bias_in(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        M = self.model.transformer.h[block].mlp.fc_in.bias
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def mlp_bias_out(self, block: int, factored: bool = True) -> ParamMatrix:
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        M = self.model.transformer.h[block].mlp.fc_out.bias
+
+        return self.maybe_factor(factored, M)
+
+    @lru_cache(maxsize=CACHESIZE)
+    def ln_weights(self, block: int, factored: bool = True) -> list[ParamMatrix]:
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        # only one LN for GPT-J since att and mlp applied in parallel
+        bias = self.model.transformer.h[block].ln_1.weight
+
+        return [self.maybe_factor(factored, bias)]
+
+    @lru_cache(maxsize=CACHESIZE)
+    def ln_biases(self, block: int, factored: bool = True) -> list[ParamMatrix]:
+        assert block < self.model.config.n_layer, f"block #{block} does not exist"
+
+        # only one LN for GPT-J since att and mlp applied in parallel
+        bias = self.model.transformer.h[block].ln_1.bias
+
+        return [self.maybe_factor(factored, bias)]
+
+    @property
+    def num_blocks(self) -> int:
+        return self.model.config.n_layer
+
+    @property
+    def num_heads(self) -> int:
+        return self.model.config.n_head
+
+    def block_structure(self) -> list[Layer]:
+        return [LayerNorm(), SelfAttention(), MLP()]
+
+    def sends_input_to(
+        self, src_layer: Layer, src_block: int, dst_layer: Layer, dst_block: int
+    ) -> bool:
+        if src_block > dst_block:
+            return False
+
+        elif src_block == dst_block:
+            if dst_layer == LayerNorm(0):
+                return False
+
+            elif dst_layer in [SelfAttention(), MLP()]:
+                return src_layer == LayerNorm(0)
+
+            else:
+                raise ValueError(f"unrecognized layer: {dst_layer}")
+
+        else:  # src_block < dst_block
+            return not isinstance(src_layer, LayerNorm)
+
+    def normalizing_layer(self, layer: Layer) -> Layer:
+        assert layer in self.block_structure(), f"unknown layer: {layer}"
+        assert layer in [SelfAttention(), MLP()], f"not a normalizer layer: {layer}"
+
+        return LayerNorm(0)
+
+
 class CachedFileModel(Model):
     """A parameter bag that reads tensors from a pytorch_model.bin file.
 
