@@ -6,12 +6,11 @@ but they offer flexibility for analysis.
 from __future__ import annotations
 
 import torch
-import numpy as np
 from torch import nn
 from transformers.models.gpt_neo.modeling_gpt_neo import GPTNeoForCausalLM
 
 
-def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
+def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> torch.Tensor:
     """Extracts the QK matrix from a given head & layer from the model."""
     config = model.config
     head_dim = config.hidden_size // config.num_heads
@@ -19,9 +18,7 @@ def qk(model: GPTNeoForCausalLM, layer: int, head: int) -> np.ndarray:
     assert head < config.num_heads
     assert layer < config.num_layers
 
-    return module_qk(
-        model.transformer.h[layer].attn.attention, head, head_dim
-    ).data.numpy()
+    return module_qk(model.transformer.h[layer].attn.attention, head, head_dim)
 
 
 def module_qk(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
@@ -43,7 +40,7 @@ def module_qk(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
 
 def ov(
     model: GPTNeoForCausalLM, layer: int, head: int, tensor: bool = False
-) -> np.ndarray:
+) -> torch.Tensor:
     """Extracts the OV matrix from a given head & layer from the model."""
     config = model.config
     head_dim = config.hidden_size // config.num_heads
@@ -51,9 +48,7 @@ def ov(
     assert head < config.num_heads
     assert layer < config.num_layers
 
-    return module_ov(
-        model.transformer.h[layer].attn.attention, head, head_dim
-    ).data.numpy()
+    return module_ov(model.transformer.h[layer].attn.attention, head, head_dim)
 
 
 def module_ov(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
@@ -73,103 +68,108 @@ def module_ov(module: nn.Module, head: int, head_dim: int) -> torch.Tensor:
     return Oh @ Vh
 
 
-def out_bias(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def out_bias(model: GPTNeoForCausalLM, layer: int) -> torch.Tensor:
     """Extracts the output bias from a given layer of the model."""
     config = model.config
 
     assert layer < config.num_layers
 
-    return model.transformer.h[layer].attn.attention.out_proj.bias.data.numpy()
+    return model.transformer.h[layer].attn.attention.out_proj.bias
 
 
-def mlp_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_in(model: GPTNeoForCausalLM, layer: int) -> torch.Tensor:
     """Extracts the input weights for an MLP layer."""
     config = model.config
 
     assert layer < config.num_layers
 
-    return model.transformer.h[layer].mlp.c_fc.weight.data.numpy()
+    return model.transformer.h[layer].mlp.c_fc.weight
 
 
-def mlp_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_out(model: GPTNeoForCausalLM, layer: int) -> torch.Tensor:
     """Extracts the output weights for an MLP layer."""
     config = model.config
 
     assert layer < config.num_layers
 
-    return model.transformer.h[layer].mlp.c_proj.weight.data.numpy()
+    return model.transformer.h[layer].mlp.c_proj.weight
 
 
-def mlp_bias_in(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_bias_in(model: GPTNeoForCausalLM, layer: int) -> torch.Tensor:
     """Extracts the bias for the input weights of an MLP layer."""
     config = model.config
 
     assert layer < config.num_layers
 
-    return model.transformer.h[layer].mlp.c_fc.bias.data.numpy()
+    return model.transformer.h[layer].mlp.c_fc.bias
 
 
-def mlp_bias_out(model: GPTNeoForCausalLM, layer: int) -> np.ndarray:
+def mlp_bias_out(model: GPTNeoForCausalLM, layer: int) -> torch.Tensor:
     """Extracts the bias for the output weights of an MLP layer."""
     config = model.config
 
     assert layer < config.num_layers
 
-    return model.transformer.h[layer].mlp.c_proj.bias.data.numpy()
+    return model.transformer.h[layer].mlp.c_proj.bias
 
 
-def ln_weights(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
+def ln_weights(
+    model: GPTNeoForCausalLM, layer: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Extracts the layer norm biases from a given layer of the model."""
     config = model.config
 
     assert layer < config.num_layers
 
-    weight_1 = model.transformer.h[layer].ln_1.weight.data.numpy()
-    weight_2 = model.transformer.h[layer].ln_2.weight.data.numpy()
+    weight_1 = model.transformer.h[layer].ln_1.weight
+    weight_2 = model.transformer.h[layer].ln_2.weight
 
     return weight_1, weight_2
 
 
-def ln_biases(model: GPTNeoForCausalLM, layer: int) -> tuple[np.ndarray, np.ndarray]:
+def ln_biases(
+    model: GPTNeoForCausalLM, layer: int
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Extracts the layer norm biases from a given layer of the model."""
     config = model.config
 
     assert layer < config.num_layers
 
-    bias_1 = model.transformer.h[layer].ln_1.bias.data.numpy()
-    bias_2 = model.transformer.h[layer].ln_2.bias.data.numpy()
+    bias_1 = model.transformer.h[layer].ln_1.bias
+    bias_2 = model.transformer.h[layer].ln_2.bias
 
     return bias_1, bias_2
 
 
 def attentionweights(
-    inputs: np.ndarray,
+    inputs: torch.Tensor,
     model: GPTNeoForCausalLM,
     layer: int,
     head: int,
-) -> np.ndarray:
+) -> torch.Tensor:
     """Computes attention weights for set of inputs to a single attention head."""
     assert len(inputs.shape) == 2
 
     seqlen = inputs.shape[1]
-    causal_mask = np.tril(np.ones((seqlen, seqlen), dtype=np.uint8))
+    causal_mask = torch.tril(torch.ones((seqlen, seqlen), dtype=torch.uint8))
 
     raw = inputs.T @ qk(model, layer, head) @ inputs
+    baseline = torch.tensor(-1e9, dtype=torch.float32)
     final = torch.nn.functional.softmax(
         # raw weights with causal mask
-        torch.tensor(np.where(causal_mask == 1, raw, -1e9)),
+        torch.where(causal_mask == 1, raw, baseline),
         dim=-1,
-    ).numpy()
+    )
 
     return final
 
 
 def selfattention(
-    inputs: np.ndarray,
+    inputs: torch.Tensor,
     model: GPTNeoForCausalLM,
     layer: int,
     head: int,
-) -> np.ndarray:
+) -> torch.Tensor:
     """Computes the self-attention output for a set of inputs to a single head."""
     assert len(inputs.shape) == 2
 

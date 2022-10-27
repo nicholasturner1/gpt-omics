@@ -11,7 +11,7 @@ from functools import partial
 from collections import OrderedDict
 from typing import Callable, Union, Optional, Generator
 
-import numpy as np
+import torch
 import pandas as pd
 
 from .svd import SVD
@@ -333,9 +333,9 @@ def apply_layer_norm(
 ) -> BlockTensors:
     """Modifies the contribution spaces to account for a layer norm in-place."""
     ln_weights = model.ln_weights(dst_block, factored=False)[dst_layer.index]
-    assert isinstance(ln_weights, np.ndarray)
+    assert isinstance(ln_weights, torch.Tensor)
 
-    ln_scalemat = SVD.frommatrix(np.diag(ln_weights.ravel()))
+    ln_scalemat = SVD.frommatrix(torch.diag(ln_weights.ravel()))
 
     def ln_takes_input(src_layer: Layer) -> bool:
         if not reverse:
@@ -356,7 +356,7 @@ def apply_layer_norm(
             if isinstance(tensor, list):
                 normed_layers.append(layer)
                 normed_tensors.append(list(map(apply_ln, tensor)))
-            elif isinstance(tensor, SVD) or isinstance(tensor, np.ndarray):
+            elif isinstance(tensor, SVD) or isinstance(tensor, torch.Tensor):
                 normed_tensors.append(apply_ln(tensor))
             else:
                 pass
@@ -553,12 +553,12 @@ def pair_engine_fn(f: Callable) -> Callable:
         lns: bool = True,
         verbose: int = 1,
         reverse: bool = False,
-        gpu_svd: bool = False,
+        device: str = "cpu",
         *args,
         **kwargs,
     ) -> None:
 
-        model = model_by_name(modelname, gpu_svd)
+        model = model_by_name(modelname, torch.device(device))
 
         if verbose:
             print("Starting pair term engine")
@@ -622,7 +622,7 @@ def parse_args(ap: Optional[argparse.ArgumentParser] = None) -> argparse.Namespa
         help="Compute reverse edges instead of forward edges.",
     )
     ap.add_argument(
-        "--gpu_svd", action="store_true", help="Compute SVDs on the GPU (naively)"
+        "--device", help="Which (torch) device should hold the tensors for computations"
     )
 
     return ap.parse_args()

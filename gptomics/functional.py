@@ -7,9 +7,150 @@ import torch
 import transformers
 from torch import nn
 from torch.nn import functional as F
+from transformers import AutoTokenizer
 
-from . import huggingface, composition as comp
+from . import huggingface, transformersio, composition as comp
 from .model import GPTNeo_HF, Model, Layer, SelfAttention, MLP, LayerNorm
+
+
+def attention_pattern(
+    modelname: str,
+    prompt: str,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, list[str]]:
+    """Runs a forward pass and returns the attention patterns between token positions.
+
+    Also returns the tokenized outputs for reference.
+
+    Returns:
+        - Attention weight values between each pair of tokens for all blocks
+          and attention heads in the model
+          (shape: num_blocks X num_heads X dst_token X src_token)
+        - The token strings for each location in the prompt
+    """
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
+
+    if cuda:
+        model = model.cuda()
+        input_ids = input_ids.cuda()
+
+    # run inference
+    with torch.no_grad():
+        outputs = model(input_ids=input_ids, output_attentions=True)
+
+    # Num blocks x number of heads x tokens x tokens
+    return torch.squeeze(torch.stack(outputs.attentions), 1), tokens
+
+
+def logit_attribution(
+    modelname: str,
+    prompt: str,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, list[str]]:
+    """Returns the logit attributions between tokens in the prompt for all heads.
+
+    Returns:
+        - Logit attribution values between each pair of tokens for all blocks
+          and attention heads in the model
+          (shape: num_blocks X num_heads X dst_token X src_token)
+        - The token strings for each location in the prompt
+    """
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
+    num_tokens = len(tokens)
+
+    config = model.config
+
+    if cuda:
+        model = model.cuda()
+        input_ids = input_ids.cuda()
+
+    attrs = list()
+
+    def get_logit_attr(attn_layer, hidden_states, output) -> None:
+        """nn.Module hook for extracting logit attribution values for a given layer.
+
+        Stores the results in the externally defined "attrs" list.
+        """
+        num_heads = attn_layer.num_heads
+        head_dim = attn_layer.head_dim
+
+        # 1 X num_heads X dest_token X src_token
+        attn_mat = output[2]  # -> need to run model with output_attentions=True
+
+        # 1 X num_heads X num_tokens X head_dim
+        v = attn_layer._split_heads(
+            attn_layer.v_proj(hidden_states[0]),
+            num_heads,
+            head_dim,
+        )
+
+        # weighting each value vector by the correct attention weight
+        # using unsqueeze and permute to broadcast the weights correctly
+        # 1 X num_heads X dest_token X src_token X head_dim
+        weighted = torch.permute(
+            torch.unsqueeze(torch.permute(attn_mat, (0, 1, 3, 2)), 4)  # attn
+            * torch.unsqueeze(v, 3),
+            (0, 1, 3, 2, 4),
+        )
+
+        # Contributions to the residual stream of each weighted value vector above
+        # using a batched matrix multiply
+        # resid: 1 X num_heads X residual_stream_sz X num_tokens^2
+        Wo = attn_layer.out_proj.weight
+        resid = torch.matmul(
+            # permuted Wo: 1 X num_heads X residual_stream_sz X head_dim
+            torch.permute(
+                torch.permute(Wo, (1, 0)).reshape(1, num_heads, head_dim, -1),
+                (0, 1, 3, 2),
+            ),
+            # permuted weighted values: 1 X num_heads X head_dim X num_tokens^2
+            torch.permute(weighted, (0, 1, 4, 2, 3)).reshape(
+                1, num_heads, head_dim, num_tokens * num_tokens
+            ),
+        )
+
+        # Logit contributions to each output token in the prompt
+        # 1 X num_heads X num_tokens X num_tokens^2
+        unembedded = torch.matmul(model.lm_head.weight[input_ids.ravel()], resid)
+
+        # reshape recovers the dst_token X src_token matrices and removes extra 1
+        # num_heads X potential_output_token X dst_token_index X src_token_index
+        attrs.append(unembedded.reshape(-1, num_tokens, num_tokens, num_tokens))
+
+    # set up hooks for all attention modules
+    handles = list()
+    for block in range(config.num_layers):
+        handles.append(
+            model.transformer.h[block].attn.attention.register_forward_hook(
+                get_logit_attr
+            )
+        )
+
+    # run the model
+    with torch.no_grad():
+        _ = model(input_ids=input_ids, output_attentions=True)
+
+    # clean up handles
+    for handle in handles:
+        handle.remove()
+
+    # recover attributions to each actual token in the prompt
+    # num_blocks X num_heads X dst_token X src_token
+    return (
+        torch.stack(
+            [
+                attr[:, torch.arange(num_tokens), torch.arange(num_tokens), :]
+                for attr in attrs
+            ]
+        ),
+        tokens,
+    )
 
 
 def direct_input_effect(
