@@ -1,7 +1,7 @@
 """Functions that actually run the network for simple tasks."""
 from __future__ import annotations
 
-from typing import Union
+from typing import Union, Optional
 
 import torch
 import transformers
@@ -48,6 +48,8 @@ def attention_pattern(
 def logit_attribution(
     modelname: str,
     prompt: str,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
     cuda: bool = True,
 ) -> tuple[torch.Tensor, list[str]]:
     """Returns the logit attributions between tokens in the prompt for all heads.
@@ -125,7 +127,16 @@ def logit_attribution(
 
     # set up hooks for all attention modules
     handles = list()
-    for block in range(config.num_layers):
+
+    if block is None:
+        for block_ in range(config.num_layers):
+            handles.append(
+                model.transformer.h[block_].attn.attention.register_forward_hook(
+                    get_logit_attr
+                )
+            )
+
+    else:
         handles.append(
             model.transformer.h[block].attn.attention.register_forward_hook(
                 get_logit_attr
@@ -142,15 +153,17 @@ def logit_attribution(
 
     # recover attributions to each actual token in the prompt
     # num_blocks X num_heads X dst_token X src_token
-    return (
-        torch.stack(
-            [
-                attr[:, torch.arange(num_tokens), torch.arange(num_tokens), :]
-                for attr in attrs
-            ]
-        ),
-        tokens,
+    result = torch.stack(
+        [
+            attr[:, torch.arange(num_tokens), torch.arange(num_tokens), :]
+            for attr in attrs
+        ]
     )
+
+    if head is not None:
+        result = result[:, head : head + 1, :, :]
+
+    return result, tokens
 
 
 def direct_input_effect(
