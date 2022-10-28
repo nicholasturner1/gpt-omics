@@ -74,8 +74,55 @@ def logit_attribution(
 
     attrs = list()
 
+    def head_logit_attr(attn_layer, hidden_states, output) -> None:
+        """nn.Module hook for extracting logit attribution values for an attention head.
+
+        Stores the results in the externally defined "attrs" list.
+        """
+        assert head is not None, "head not defined"
+
+        num_heads = attn_layer.num_heads
+        head_dim = attn_layer.head_dim
+
+        # dest_token X src_token
+        attn_mat = output[2][0, head]
+
+        # num_tokens X head_dim
+        v = attn_layer._split_heads(
+            attn_layer.v_proj(hidden_states[0]),
+            num_heads,
+            head_dim,
+        )[0, head]
+
+        # weighting each value vector by the correct attention weight
+        # using unsqueeze and permute to broadcast the weights correctly
+        # dest_token X src_token X head_dim
+        weighted = torch.permute(
+            torch.unsqueeze(v.T, 2) * torch.unsqueeze(attn_mat.T, 0), (2, 1, 0)
+        )
+
+        # Contributions to the residual stream of each weighted value vector above
+        # using a standard matrix multiply
+        # resid: residual_stream_sz X num_tokens^2
+        Wo = attn_layer.out_proj.weight[:, head * head_dim : (head + 1) * head_dim]
+        resid = torch.matmul(
+            Wo,
+            # permuted weighted values: head_dim X num_tokens^2
+            torch.permute(weighted, (2, 0, 1)).reshape(
+                head_dim, num_tokens * num_tokens
+            ),
+        )
+
+        # Logit contributions to each output token in the prompt
+        # num_tokens X num_tokens^2
+        unembedded = torch.matmul(model.lm_head.weight[input_ids.ravel()], resid)
+
+        # reshape recovers the dst_token X src_token matrices
+        # potential_output_token X dst_token_index X src_token_index
+        attrs.append(unembedded.reshape(num_tokens, num_tokens, num_tokens))
+
     def get_logit_attr(attn_layer, hidden_states, output) -> None:
-        """nn.Module hook for extracting logit attribution values for a given layer.
+        """nn.Module hook for extracting logit attribution values for a layer.
 
         Stores the results in the externally defined "attrs" list.
         """
@@ -128,19 +175,17 @@ def logit_attribution(
     # set up hooks for all attention modules
     handles = list()
 
+    hook = get_logit_attr if head is None else head_logit_attr
+
     if block is None:
         for block_ in range(config.num_layers):
             handles.append(
-                model.transformer.h[block_].attn.attention.register_forward_hook(
-                    get_logit_attr
-                )
+                model.transformer.h[block_].attn.attention.register_forward_hook(hook)
             )
 
     else:
         handles.append(
-            model.transformer.h[block].attn.attention.register_forward_hook(
-                get_logit_attr
-            )
+            model.transformer.h[block].attn.attention.register_forward_hook(hook)
         )
 
     # run the model
@@ -155,13 +200,10 @@ def logit_attribution(
     # num_blocks X num_heads X dst_token X src_token
     result = torch.stack(
         [
-            attr[:, torch.arange(num_tokens), torch.arange(num_tokens), :]
+            attr[..., torch.arange(num_tokens), torch.arange(num_tokens), :]
             for attr in attrs
         ]
     )
-
-    if head is not None:
-        result = result[:, head : head + 1, :, :]
 
     return result, tokens
 
