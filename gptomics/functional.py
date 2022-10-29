@@ -7,7 +7,7 @@ import torch
 import transformers
 from torch import nn
 from torch.nn import functional as F
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, GPTJForCausalLM, GPTNeoForCausalLM
 
 from . import huggingface, transformersio, composition as comp
 from .model import GPTNeo_HF, Model, Layer, SelfAttention, MLP, LayerNorm
@@ -126,7 +126,7 @@ def logit_attribution(
 
         Stores the results in the externally defined "attrs" list.
         """
-        num_heads = attn_layer.num_heads
+        num_heads = num_attention_heads(attn_layer)  # need a fn to handle different
         head_dim = attn_layer.head_dim
 
         # 1 X num_heads X dest_token X src_token
@@ -179,14 +179,10 @@ def logit_attribution(
 
     if block is None:
         for block_ in range(config.num_layers):
-            handles.append(
-                model.transformer.h[block_].attn.attention.register_forward_hook(hook)
-            )
+            handles.append(attention_layer(model, block_).register_forward_hook(hook))
 
     else:
-        handles.append(
-            model.transformer.h[block].attn.attention.register_forward_hook(hook)
-        )
+        handles.append(attention_layer(model, block).register_forward_hook(hook))
 
     # run the model
     with torch.no_grad():
@@ -206,6 +202,26 @@ def logit_attribution(
     )
 
     return result, tokens
+
+
+def attention_layer(model, block: int):
+    """Extracts the attention layer module from a huggingface model."""
+    if isinstance(model, GPTJForCausalLM):
+        return model.transformer.h[block].attn.attention
+    elif isinstance(model, GPTNeoForCausalLM):
+        return model.transformer.h[block].attn
+    else:
+        raise ValueError(f"unrecognized model type: {type(model)}")
+
+
+def num_attention_heads(attn_layer):
+    """Extracts the number of attention heads from a huggingface attention layer."""
+    if hasattr(attn_layer, "num_heads"):
+        return attn_layer.num_heads
+    elif hasattr(attn_layer, "num_attention_heads"):
+        return attn_layer.num_attention_heads
+    else:
+        raise ValueError(f"unrecognized layer type: {type(attn_layer)}")
 
 
 def direct_input_effect(
