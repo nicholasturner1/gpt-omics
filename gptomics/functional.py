@@ -206,9 +206,9 @@ def logit_attribution(
 
 def attention_layer(model, block: int):
     """Extracts the attention layer module from a huggingface model."""
-    if isinstance(model, GPTJForCausalLM):
+    if isinstance(model, GPTNeoForCausalLM):
         return model.transformer.h[block].attn.attention
-    elif isinstance(model, GPTNeoForCausalLM):
+    elif isinstance(model, GPTJForCausalLM):
         return model.transformer.h[block].attn
     else:
         raise ValueError(f"unrecognized model type: {type(model)}")
