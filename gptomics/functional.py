@@ -1,6 +1,7 @@
 """Functions that actually run the network for simple tasks."""
 from __future__ import annotations
 
+import inspect
 from typing import Union, Optional
 
 import torch
@@ -88,11 +89,19 @@ def logit_attribution(
         attn_mat = output[2][0, head]
 
         # num_tokens X head_dim
-        v = attn_layer._split_heads(
-            attn_layer.v_proj(hidden_states[0]),
-            num_heads,
-            head_dim,
-        )[0, head]
+        if "rotary" in inspect.signature(attn_layer._split_heads).parameters:
+            v = attn_layer._split_heads(
+                attn_layer.v_proj(hidden_states[0]),
+                num_heads,
+                head_dim,
+                rotary=False,
+            )[0, head]
+        else:
+            v = attn_layer._split_heads(
+                attn_layer.v_proj(hidden_states[0]),
+                num_heads,
+                head_dim,
+            )[0, head]
 
         # weighting each value vector by the correct attention weight
         # using unsqueeze and permute to broadcast the weights correctly
