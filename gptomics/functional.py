@@ -81,7 +81,7 @@ def logit_attribution(
         """
         assert head is not None, "head not defined"
 
-        num_heads = attn_layer.num_heads
+        num_heads = num_attention_heads(attn_layer)  # need a fn to handle different
         head_dim = attn_layer.head_dim
 
         # dest_token X src_token
@@ -122,7 +122,7 @@ def logit_attribution(
         attrs.append(unembedded.reshape(num_tokens, num_tokens, num_tokens))
 
     def get_logit_attr(attn_layer, hidden_states, output) -> None:
-        """nn.Module hook for extracting logit attribution values for a layer.
+        """nn.Module hook for extracting logit attribution values for a block.
 
         Stores the results in the externally defined "attrs" list.
         """
