@@ -202,10 +202,11 @@ def logit_attribution(
         handle.remove()
 
     # recover attributions to each actual token in the prompt
-    # num_blocks X num_heads X dst_token X src_token
+    # [num_blocks X] num_heads X dst_token X src_token
     result = torch.stack(
         [
-            attr[..., torch.arange(num_tokens), torch.arange(num_tokens), :]
+            attr[..., torch.arange(num_tokens)[1:], torch.arange(num_tokens)[:-1], :]
+            # attr[..., torch.arange(num_tokens), torch.arange(num_tokens), :]
             for attr in attrs
         ]
     )
