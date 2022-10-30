@@ -34,6 +34,12 @@ def attention_pattern(
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
     tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
 
+    return _attention_pattern(model, input_ids, cuda), tokens
+
+
+def _attention_pattern(
+    model, input_ids: torch.Tensor, cuda: bool = True
+) -> torch.Tensor:
     if cuda:
         model = model.cuda()
         input_ids = input_ids.cuda()
@@ -43,7 +49,7 @@ def attention_pattern(
         outputs = model(input_ids=input_ids, output_attentions=True)
 
     # Num blocks x number of heads x tokens x tokens
-    return torch.squeeze(torch.stack(outputs.attentions), 1), tokens
+    return torch.squeeze(torch.stack(outputs.attentions), 1)
 
 
 def logit_attribution(
@@ -65,8 +71,18 @@ def logit_attribution(
     tokenizer = AutoTokenizer.from_pretrained(modelname)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
     tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
-    num_tokens = len(tokens)
 
+    return _logit_attribution(model, input_ids, block, head, cuda), tokens
+
+
+def _logit_attribution(
+    model,
+    input_ids: torch.Tensor,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
+    cuda: bool = True,
+) -> torch.Tensor:
+    num_tokens = len(input_ids.ravel())
     config = model.config
 
     if cuda:
@@ -211,7 +227,7 @@ def logit_attribution(
         ]
     )
 
-    return result, tokens
+    return result
 
 
 def attention_layer(model, block: int):
