@@ -1,6 +1,7 @@
 """Functions that actually run the network for simple tasks."""
 from __future__ import annotations
 
+import random
 import inspect
 from typing import Union, Optional
 
@@ -248,6 +249,94 @@ def num_attention_heads(attn_layer):
         return attn_layer.num_attention_heads
     else:
         raise ValueError(f"unrecognized layer type: {type(attn_layer)}")
+
+
+def compute_prefix_matching_score(
+    modelname: str,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    seed: Optional[int] = None,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Computing prefix matching score from a huggingface model."""
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+
+    input_ids = random_prompt(
+        tokenizer, seqlen=seqlen, repeats=repeats, bos_token=bos_token, seed=seed
+    )
+
+    return _compute_prefix_matching_score(
+        model, input_ids, seqlen=seqlen, repeats=repeats, bos_token=bos_token, cuda=cuda
+    )
+
+
+def random_prompt(
+    tokenizer, seqlen: int, repeats: int, bos_token: bool, seed: Optional[int] = None
+) -> torch.Tensor:
+    """Makes a prompt from random tokens."""
+    random.seed(seed)
+    vocab = tokenizer.get_vocab()
+
+    # needs to be wrapped in an outer list for HF inference
+    input_ids = [[s[1] for s in random.sample(list(vocab.items()), seqlen)] * repeats]
+
+    if bos_token:
+        input_ids[0] = [vocab[tokenizer.bos_token]] + input_ids[0]
+
+    return torch.tensor(input_ids)
+
+
+def _compute_prefix_matching_score(
+    model,
+    input_ids: torch.Tensor,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    attn = _attention_pattern(model, input_ids, cuda=cuda)
+
+    return (
+        prefix_matching_score(
+            attn, seqlen=seqlen, repeats=repeats, bos_token=bos_token
+        ),
+        attn,
+    )
+
+
+def prefix_matching_score(
+    attn, seqlen: int = 25, repeats: int = 4, bos_token: bool = True
+) -> torch.Tensor:
+    assert attn.ndim >= 2, "Need at least two dimensions."
+
+    mask = repeatmask(attn.shape[-2:], seqlen, repeats, bos_token=bos_token)
+
+    if attn.ndim == 2:
+        return torch.mean(attn[mask])
+
+    else:
+        return torch.mean(attn[..., mask], -1)
+
+
+def repeatmask(
+    shape: tuple[int, int], seqlen: int, repeats: int, bos_token: bool = True
+) -> torch.Tensor:
+    """
+    A mask pointing to the token FOLLOWING the last copy of the previous token
+    in a series of repeats.
+    """
+    ys, xs = torch.meshgrid(torch.arange(shape[0]), torch.arange(shape[1]))
+    mask = torch.zeros(shape, dtype=torch.bool)
+
+    for i in range(1, repeats):
+        mask[ys == xs + seqlen * i - 1] = True
+
+    # The bos_token and the first content token can't follow a repeat
+    mask[:, : 0 + bos_token + 1] = False
+
+    return mask
 
 
 def direct_input_effect(
