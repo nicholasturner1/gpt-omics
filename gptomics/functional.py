@@ -359,6 +359,8 @@ def compute_copying_score(
     repeats: int = 4,
     bos_token: bool = True,
     seed: Optional[int] = None,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
     cuda: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Computing prefix matching score from a huggingface model."""
@@ -370,7 +372,14 @@ def compute_copying_score(
     )
 
     return _compute_copying_score(
-        model, input_ids, seqlen=seqlen, repeats=repeats, bos_token=bos_token, cuda=cuda
+        model,
+        input_ids,
+        seqlen=seqlen,
+        repeats=repeats,
+        bos_token=bos_token,
+        block=block,
+        head=head,
+        cuda=cuda,
     )
 
 
@@ -380,9 +389,13 @@ def _compute_copying_score(
     seqlen: int = 25,
     repeats: int = 4,
     bos_token: bool = True,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
     cuda: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    attr = _logit_attribution(model, input_ids, cuda=cuda, collapse_predictions=False)
+    attr = _logit_attribution(
+        model, input_ids, block=block, head=head, cuda=cuda, collapse_predictions=False
+    )
 
     return copying_score(attr, seqlen, repeats, bos_token), attr
 
