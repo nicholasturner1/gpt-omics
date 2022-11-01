@@ -289,9 +289,12 @@ def random_prompt(
     """Makes a prompt from random tokens."""
     random.seed(seed)
     vocab = tokenizer.get_vocab()
+    # sorting to ensure that the order (-> sampling) becomes deterministic under
+    # a set seed
+    vocab_entries = sorted(vocab.items(), key=lambda t: t[0])
 
     # needs to be wrapped in an outer list for HF inference
-    input_ids = [[s[1] for s in random.sample(list(vocab.items()), seqlen)] * repeats]
+    input_ids = [[s[1] for s in random.sample(vocab_entries, seqlen)] * repeats]
 
     if bos_token:
         input_ids[0] = [vocab[tokenizer.bos_token]] + input_ids[0]
