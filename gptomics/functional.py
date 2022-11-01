@@ -59,6 +59,7 @@ def logit_attribution(
     block: Optional[int] = None,
     head: Optional[int] = None,
     cuda: bool = True,
+    collapse_predictions: bool = True,
 ) -> tuple[torch.Tensor, list[str]]:
     """Returns the logit attributions between tokens in the prompt for all heads.
 
@@ -73,7 +74,17 @@ def logit_attribution(
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
     tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
 
-    return _logit_attribution(model, input_ids, block, head, cuda), tokens
+    return (
+        _logit_attribution(
+            model,
+            input_ids,
+            block,
+            head,
+            cuda,
+            collapse_predictions=collapse_predictions,
+        ),
+        tokens,
+    )
 
 
 def _logit_attribution(
@@ -82,6 +93,7 @@ def _logit_attribution(
     block: Optional[int] = None,
     head: Optional[int] = None,
     cuda: bool = True,
+    collapse_predictions: bool = True,
 ) -> torch.Tensor:
     num_tokens = len(input_ids.ravel())
     config = model.config
@@ -220,13 +232,12 @@ def _logit_attribution(
 
     # recover attributions to each actual token in the prompt
     # [num_blocks X] num_heads X dst_token X src_token
-    result = torch.stack(
-        [
-            attr[..., torch.arange(num_tokens)[1:], torch.arange(num_tokens)[:-1], :]
-            # attr[..., torch.arange(num_tokens), torch.arange(num_tokens), :]
-            for attr in attrs
+    result = torch.stack(attrs)
+
+    if collapse_predictions:
+        result = result[
+            ..., torch.arange(num_tokens)[1:], torch.arange(num_tokens)[:-1], :
         ]
-    )
 
     return result
 
@@ -337,6 +348,71 @@ def repeatmask(
     mask[:, : 0 + bos_token + 1] = False
 
     return mask
+
+
+def compute_copying_score(
+    modelname: str,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    seed: Optional[int] = None,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Computing prefix matching score from a huggingface model."""
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+
+    input_ids = random_prompt(
+        tokenizer, seqlen=seqlen, repeats=repeats, bos_token=bos_token, seed=seed
+    )
+
+    return _compute_copying_score(
+        model, input_ids, seqlen=seqlen, repeats=repeats, bos_token=bos_token, cuda=cuda
+    )
+
+
+def _compute_copying_score(
+    model,
+    input_ids: torch.Tensor,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    attr = _logit_attribution(model, input_ids, cuda=cuda, collapse_predictions=False)
+
+    return copying_score(attr, seqlen, repeats, bos_token), attr
+
+
+def copying_score(
+    attr, seqlen: int = 25, repeats: int = 4, bos_token: bool = True, eps: float = 1e-10
+) -> torch.Tensor:
+    """
+    eps is a small number for numerical stability.
+    """
+    mask = repeatmask(attr.shape[-2:], seqlen, repeats, bos_token)
+
+    # logit attr values at induction pair indices
+    inductionpairs = attr[..., mask]
+
+    ys, xs = torch.meshgrid(torch.arange(attr.shape[-2]), torch.arange(attr.shape[-1]))
+    numeratortokeninds = (ys % seqlen)[mask]
+
+    offset = 0 + bos_token
+    # removing mean
+    centeredpairs = inductionpairs - inductionpairs[..., offset:, :].mean(
+        -2, keepdim=True
+    )
+
+    # ReLU
+    centeredpairs[centeredpairs < 0] = 0
+
+    numerators = centeredpairs[
+        ..., numeratortokeninds + offset, torch.arange(len(numeratortokeninds))
+    ]
+    denominators = centeredpairs[..., offset : seqlen + offset, :].sum(-2)
+
+    return (numerators / (denominators + eps)).mean(-1)
 
 
 def direct_input_effect(
