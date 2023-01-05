@@ -1,13 +1,15 @@
 """Functions that actually run the network for simple tasks."""
 from __future__ import annotations
 
+import random
+import inspect
 from typing import Union, Optional
 
 import torch
 import transformers
 from torch import nn
 from torch.nn import functional as F
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, GPTJForCausalLM, GPTNeoForCausalLM
 
 from . import huggingface, transformersio, composition as comp
 from .model import GPTNeo_HF, Model, Layer, SelfAttention, MLP, LayerNorm
@@ -33,6 +35,12 @@ def attention_pattern(
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
     tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
 
+    return _attention_pattern(model, input_ids, cuda), tokens
+
+
+def _attention_pattern(
+    model, input_ids: torch.Tensor, cuda: bool = True
+) -> torch.Tensor:
     if cuda:
         model = model.cuda()
         input_ids = input_ids.cuda()
@@ -42,7 +50,7 @@ def attention_pattern(
         outputs = model(input_ids=input_ids, output_attentions=True)
 
     # Num blocks x number of heads x tokens x tokens
-    return torch.squeeze(torch.stack(outputs.attentions), 1), tokens
+    return torch.squeeze(torch.stack(outputs.attentions), 1)
 
 
 def logit_attribution(
@@ -51,6 +59,7 @@ def logit_attribution(
     block: Optional[int] = None,
     head: Optional[int] = None,
     cuda: bool = True,
+    collapse_predictions: bool = True,
 ) -> tuple[torch.Tensor, list[str]]:
     """Returns the logit attributions between tokens in the prompt for all heads.
 
@@ -64,8 +73,29 @@ def logit_attribution(
     tokenizer = AutoTokenizer.from_pretrained(modelname)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
     tokens = tokenizer.convert_ids_to_tokens(list(input_ids.squeeze()))
-    num_tokens = len(tokens)
 
+    return (
+        _logit_attribution(
+            model,
+            input_ids,
+            block,
+            head,
+            cuda,
+            collapse_predictions=collapse_predictions,
+        ),
+        tokens,
+    )
+
+
+def _logit_attribution(
+    model,
+    input_ids: torch.Tensor,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
+    cuda: bool = True,
+    collapse_predictions: bool = True,
+) -> torch.Tensor:
+    num_tokens = len(input_ids.ravel())
     config = model.config
 
     if cuda:
@@ -81,18 +111,26 @@ def logit_attribution(
         """
         assert head is not None, "head not defined"
 
-        num_heads = attn_layer.num_heads
+        num_heads = num_attention_heads(attn_layer)  # need a fn to handle different
         head_dim = attn_layer.head_dim
 
         # dest_token X src_token
         attn_mat = output[2][0, head]
 
         # num_tokens X head_dim
-        v = attn_layer._split_heads(
-            attn_layer.v_proj(hidden_states[0]),
-            num_heads,
-            head_dim,
-        )[0, head]
+        if "rotary" in inspect.signature(attn_layer._split_heads).parameters:
+            v = attn_layer._split_heads(
+                attn_layer.v_proj(hidden_states[0]),
+                num_heads,
+                head_dim,
+                rotary=False,
+            )[0, head]
+        else:
+            v = attn_layer._split_heads(
+                attn_layer.v_proj(hidden_states[0]),
+                num_heads,
+                head_dim,
+            )[0, head]
 
         # weighting each value vector by the correct attention weight
         # using unsqueeze and permute to broadcast the weights correctly
@@ -122,11 +160,11 @@ def logit_attribution(
         attrs.append(unembedded.reshape(num_tokens, num_tokens, num_tokens))
 
     def get_logit_attr(attn_layer, hidden_states, output) -> None:
-        """nn.Module hook for extracting logit attribution values for a layer.
+        """nn.Module hook for extracting logit attribution values for a block.
 
         Stores the results in the externally defined "attrs" list.
         """
-        num_heads = attn_layer.num_heads
+        num_heads = num_attention_heads(attn_layer)  # need a fn to handle different
         head_dim = attn_layer.head_dim
 
         # 1 X num_heads X dest_token X src_token
@@ -179,14 +217,10 @@ def logit_attribution(
 
     if block is None:
         for block_ in range(config.num_layers):
-            handles.append(
-                model.transformer.h[block_].attn.attention.register_forward_hook(hook)
-            )
+            handles.append(attention_layer(model, block_).register_forward_hook(hook))
 
     else:
-        handles.append(
-            model.transformer.h[block].attn.attention.register_forward_hook(hook)
-        )
+        handles.append(attention_layer(model, block).register_forward_hook(hook))
 
     # run the model
     with torch.no_grad():
@@ -197,15 +231,204 @@ def logit_attribution(
         handle.remove()
 
     # recover attributions to each actual token in the prompt
-    # num_blocks X num_heads X dst_token X src_token
-    result = torch.stack(
-        [
-            attr[..., torch.arange(num_tokens), torch.arange(num_tokens), :]
-            for attr in attrs
+    # [num_blocks X] num_heads X dst_token X src_token
+    result = torch.stack(attrs)
+
+    if collapse_predictions:
+        result = result[
+            ..., torch.arange(num_tokens)[1:], torch.arange(num_tokens)[:-1], :
         ]
+
+    return result
+
+
+def attention_layer(model, block: int):
+    """Extracts the attention layer module from a huggingface model."""
+    if isinstance(model, GPTNeoForCausalLM):
+        return model.transformer.h[block].attn.attention
+    elif isinstance(model, GPTJForCausalLM):
+        return model.transformer.h[block].attn
+    else:
+        raise ValueError(f"unrecognized model type: {type(model)}")
+
+
+def num_attention_heads(attn_layer):
+    """Extracts the number of attention heads from a huggingface attention layer."""
+    if hasattr(attn_layer, "num_heads"):
+        return attn_layer.num_heads
+    elif hasattr(attn_layer, "num_attention_heads"):
+        return attn_layer.num_attention_heads
+    else:
+        raise ValueError(f"unrecognized layer type: {type(attn_layer)}")
+
+
+def compute_prefix_matching_score(
+    modelname: str,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    seed: Optional[int] = None,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Computing prefix matching score from a huggingface model."""
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+
+    input_ids = random_prompt(
+        tokenizer, seqlen=seqlen, repeats=repeats, bos_token=bos_token, seed=seed
     )
 
-    return result, tokens
+    return _compute_prefix_matching_score(
+        model, input_ids, seqlen=seqlen, repeats=repeats, bos_token=bos_token, cuda=cuda
+    )
+
+
+def random_prompt(
+    tokenizer, seqlen: int, repeats: int, bos_token: bool, seed: Optional[int] = None
+) -> torch.Tensor:
+    """Makes a prompt from random tokens."""
+    random.seed(seed)
+    vocab = tokenizer.get_vocab()
+    # sorting to ensure that the order (-> sampling) becomes deterministic under
+    # a set seed
+    vocab_entries = sorted(vocab.items(), key=lambda t: t[0])
+
+    # needs to be wrapped in an outer list for HF inference
+    input_ids = [[s[1] for s in random.sample(vocab_entries, seqlen)] * repeats]
+
+    if bos_token:
+        input_ids[0] = [vocab[tokenizer.bos_token]] + input_ids[0]
+
+    return torch.tensor(input_ids)
+
+
+def _compute_prefix_matching_score(
+    model,
+    input_ids: torch.Tensor,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    attn = _attention_pattern(model, input_ids, cuda=cuda)
+
+    return (
+        prefix_matching_score(
+            attn, seqlen=seqlen, repeats=repeats, bos_token=bos_token
+        ),
+        attn,
+    )
+
+
+def prefix_matching_score(
+    attn, seqlen: int = 25, repeats: int = 4, bos_token: bool = True
+) -> torch.Tensor:
+    assert attn.ndim >= 2, "Need at least two dimensions."
+
+    mask = repeatmask(attn.shape[-2:], seqlen, repeats, bos_token=bos_token)
+
+    if attn.ndim == 2:
+        return torch.mean(attn[mask])
+
+    else:
+        return torch.mean(attn[..., mask], -1)
+
+
+def repeatmask(
+    shape: tuple[int, int], seqlen: int, repeats: int, bos_token: bool = True
+) -> torch.Tensor:
+    """
+    A mask pointing to the token FOLLOWING the last copy of the previous token
+    in a series of repeats.
+    """
+    ys, xs = torch.meshgrid(torch.arange(shape[0]), torch.arange(shape[1]))
+    mask = torch.zeros(shape, dtype=torch.bool)
+
+    for i in range(1, repeats):
+        mask[ys == xs + seqlen * i - 1] = True
+
+    # The bos_token and the first content token can't follow a repeat
+    mask[:, : 0 + bos_token + 1] = False
+
+    return mask
+
+
+def compute_copying_score(
+    modelname: str,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    seed: Optional[int] = None,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Computing prefix matching score from a huggingface model."""
+    model = transformersio.load_model(modelname)
+    tokenizer = AutoTokenizer.from_pretrained(modelname)
+
+    input_ids = random_prompt(
+        tokenizer, seqlen=seqlen, repeats=repeats, bos_token=bos_token, seed=seed
+    )
+
+    return _compute_copying_score(
+        model,
+        input_ids,
+        seqlen=seqlen,
+        repeats=repeats,
+        bos_token=bos_token,
+        block=block,
+        head=head,
+        cuda=cuda,
+    )
+
+
+def _compute_copying_score(
+    model,
+    input_ids: torch.Tensor,
+    seqlen: int = 25,
+    repeats: int = 4,
+    bos_token: bool = True,
+    block: Optional[int] = None,
+    head: Optional[int] = None,
+    cuda: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    attr = _logit_attribution(
+        model, input_ids, block=block, head=head, cuda=cuda, collapse_predictions=False
+    )
+
+    return copying_score(attr, seqlen, repeats, bos_token), attr
+
+
+def copying_score(
+    attr, seqlen: int = 25, repeats: int = 4, bos_token: bool = True, eps: float = 1e-10
+) -> torch.Tensor:
+    """
+    eps is a small number for numerical stability.
+    """
+    mask = repeatmask(attr.shape[-2:], seqlen, repeats, bos_token)
+
+    # logit attr values at induction pair indices
+    inductionpairs = attr[..., mask]
+
+    ys, xs = torch.meshgrid(torch.arange(attr.shape[-2]), torch.arange(attr.shape[-1]))
+    numeratortokeninds = (ys % seqlen)[mask]
+
+    offset = 0 + bos_token
+    # removing mean
+    centeredpairs = inductionpairs - inductionpairs[..., offset:, :].mean(
+        -2, keepdim=True
+    )
+
+    # ReLU
+    centeredpairs[centeredpairs < 0] = 0
+
+    numerators = centeredpairs[
+        ..., numeratortokeninds + offset, torch.arange(len(numeratortokeninds))
+    ]
+    denominators = centeredpairs[..., offset : seqlen + offset, :].sum(-2)
+
+    return (numerators / (denominators + eps)).mean(-1)
 
 
 def direct_input_effect(

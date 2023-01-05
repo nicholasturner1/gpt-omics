@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -285,3 +286,57 @@ def plot_ipc_percentiles(
     ax.set_ylabel("IPC", fontsize=fontsize)
 
     return ax
+
+
+def plot_token_relation(
+    relation: np.ndarray, cmap="Reds", fontsize=DEFAULT_FONTSIZE, center=False, **kwargs
+):
+    assert relation.ndim == 2
+
+    if center:
+        relation = center_tril(relation)
+
+    plt.imshow(relation, cmap=cmap, **kwargs)
+
+    plt.xlabel("Source token", fontsize=fontsize)
+    plt.ylabel("Dest token", fontsize=fontsize)
+
+
+def center_tril(M: np.ndarray) -> np.ndarray:
+    """Removes the row mean from each row of M (assumed to be lower-triangular)."""
+    assert M.ndim == 2
+
+    numnonzero = M.shape[1] - np.arange(M.shape[0])[::-1]
+    rowmeans = M.sum(1) / numnonzero
+
+    centered = M - np.tile(rowmeans, (M.shape[1], 1)).T
+    xs, ys = np.meshgrid(np.arange(M.shape[1]), np.arange(M.shape[0]))
+    centered[xs > ys] = 0
+
+    return centered
+
+
+def plot_rows(
+    attn_or_attr: torch.Tensor,
+    tokens: list[str],
+    rows: list[int],
+    threshold: float = 0.1,
+    fontsize: int = 15,
+    cmap: str = "bwr",
+    vmin: float = -1.0,
+    vmax: float = 1.0,
+    rotation: float = 45,
+    **kwargs,
+) -> None:
+    """Plots selected rows of logit attributions, highlighting tokens with high vals."""
+    for i, d in enumerate(rows):
+        plt.subplot(len(rows), 1, i + 1)
+
+        vals = attn_or_attr[d : d + 1, : d + 1]
+        plt.imshow(vals, cmap=cmap, vmin=-1, vmax=1)
+
+        big_indices = np.flatnonzero(np.abs(vals) > threshold)
+        ticks = [tokens[i] for i in big_indices]
+        plt.xticks(big_indices, ticks, rotation=rotation, fontsize=fontsize)
+
+        plt.yticks([])
